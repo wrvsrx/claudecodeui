@@ -12,7 +12,7 @@ import type {
 import { useDropzone } from 'react-dropzone';
 import { useTranslation } from 'react-i18next';
 
-import { api, ApiRequestError } from '@/shared/api';
+import { api, ApiRequestError, readApiErrorMessage } from '@/shared/api';
 import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 import { readUserPreference } from '@/shared/userSettings';
 import type { BackgroundSendChoice, BackgroundSendPrompt, CommandModalPayload, CostCommandData, HelpCommandData, MarkSessionProcessing, ModelCommandData, PendingSteer, QueuedDraft, SessionActivityMap, StatusCommandData, SteerOutcome,QueuedSendOptions,ChatAttachment,ChatMessage,PendingPermissionRequest,PermissionMode,SessionEstablishedContext,Project,ProjectSession,LLMProvider,SlashCommand } from '@/shared/types';
@@ -1304,7 +1304,8 @@ export function useChatComposerState({
             initialMessage: messageContent,
           });
           if (!response.ok) {
-            throw new Error(`Failed to create session (${response.status})`);
+            const body: unknown = await response.json().catch(() => null);
+            throw new Error(readApiErrorMessage(body) ?? `Failed to create session (${response.status})`);
           }
           const body = await response.json();
           targetSessionId = body?.data?.sessionId || null;

@@ -801,6 +801,8 @@ export type ProviderRuntimePermissionGateway = {
  * adapters from importing services that resolve back through providerRegistry.
  */
 export type ProviderRuntimeContext = {
+  /** Reads the database binding for a Claude app session, never request options. */
+  resolveClaudeSettingsProfileId?(sessionId: string): string | undefined;
   resolveProviderSessionId(sessionId: string | null | undefined): string | null;
   resolveResumeModel(
     sessionId: string | undefined,

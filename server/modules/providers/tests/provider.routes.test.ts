@@ -26,7 +26,10 @@ async function withProviderServer(
   await writeFile(process.env.DATABASE_PATH, '');
   await initializeDatabase();
 
-  const app = express().use(express.json()).use('/api/providers', providerRouter);
+  const app = express().use(express.json()).use('/api/providers', (req, _res, next) => {
+    Object.assign(req, { user: { id: 1 } });
+    next();
+  }, providerRouter);
   app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (error instanceof AppError) {
       res.status(error.statusCode).json({

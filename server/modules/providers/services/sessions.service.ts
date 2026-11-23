@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { broadcastSessionUpserted, chatRunRegistry } from '@/modules/websocket/index.js';
+import { claudeSettingsProfilesService } from './claude-settings-profiles.service.js';
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
 import { listBusyClaudeCliSessions } from '@/modules/providers/services/claude-cli-liveness.service.js';
 import { providerCapabilitiesService } from '@/modules/providers/services/provider-capabilities.service.js';
@@ -395,6 +396,12 @@ export const sessionsService = {
     return session ? session.provider_session_id : sessionId;
   },
 
+  /** Used by the Claude runtime and Shell resume guard to read the persistent binding. */
+  resolveClaudeSettingsProfileId(sessionId: string): string | undefined {
+    const session = sessionsDb.getSessionById(sessionId) ?? sessionsDb.getSessionByProviderSessionId(sessionId);
+    return session?.provider === 'claude' ? session.claude_settings_profile_id ?? undefined : undefined;
+  },
+
   /**
    * Normalizes one provider-native event into frontend session message events.
    */
@@ -415,12 +422,15 @@ export const sessionsService = {
    * for the lifetime of the conversation. The provider-native id is mapped to
    * this row later, when the provider runtime announces it mid-run. Its title
    * comes directly from the first visible CloudCLI message and is limited to
-   * four whole words before any provider-owned storage exists.
+   * four whole words before any provider-owned storage exists. Callers in the
+   * Providers and Agent HTTP routes pass the authenticated account id so a new
+   * Claude session can pin that account's current default (including null).
    */
   createAppSession(
     provider: LLMProvider,
     projectPath: string,
     initialMessage: string,
+    userId: number,
   ): CreateAppSessionResult {
     const normalizedProjectPath = projectPath.trim();
     if (!normalizedProjectPath) {
@@ -430,9 +440,12 @@ export const sessionsService = {
       });
     }
 
+    const claudeSettingsProfileId = provider === 'claude'
+      ? claudeSettingsProfilesService.resolveNewSessionProfileId(userId)
+      : undefined;
     const sessionId = randomUUID();
     const sessionName = buildCloudCliSessionName(initialMessage);
-    sessionsDb.createAppSession(sessionId, provider, normalizedProjectPath, sessionName);
+    sessionsDb.createAppSession(sessionId, provider, normalizedProjectPath, sessionName, claudeSettingsProfileId);
 
     return {
       sessionId,
@@ -503,6 +516,7 @@ export const sessionsService = {
       // differently from the conversation it was branched from.
       model: source.model,
       effort: source.effort,
+      claudeSettingsProfileId: source.claude_settings_profile_id,
     });
 
     await broadcastSessionUpserted(forkSessionId);

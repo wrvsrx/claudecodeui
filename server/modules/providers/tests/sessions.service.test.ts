@@ -47,6 +47,7 @@ test('app session names use at most four whole words from the initial message', 
       'codex',
       '/tmp/session-name-project',
       '  supercalifragilisticexpialidocious\nsecond   third fourth fifth  ',
+      1,
     );
 
     assert.equal(result.sessionName, 'supercalifragilisticexpialidocious second third fourth');
@@ -59,7 +60,7 @@ test('app session names use at most four whole words from the initial message', 
 
 test('app sessions without message text receive a stable fallback name', { concurrency: false }, async () => {
   await withIsolatedDatabase(() => {
-    const result = sessionsService.createAppSession('claude', '/tmp/attachment-only-project', '  \n ');
+    const result = sessionsService.createAppSession('claude', '/tmp/attachment-only-project', '  \n ', 1);
 
     assert.equal(result.sessionName, 'Untitled Session');
     assert.equal(sessionsDb.getSessionById(result.sessionId)?.custom_name, 'Untitled Session');

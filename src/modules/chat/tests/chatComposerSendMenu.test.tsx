@@ -108,6 +108,11 @@ test('idle: the plain send button, and no send menu', () => {
   assert.ok(!hasMenuTrigger(), 'no menu while nothing runs');
 });
 
+test('the composer does not render an account-level Claude settings picker', () => {
+  render(<UiPreferencesProvider><ChatComposer {...props({})} /></UiPreferencesProvider>);
+  assert.equal(screen.queryByRole('combobox', { name: /Claude (settings|endpoint)/i }), null);
+});
+
 test('turn running, composer empty: the green submit button is Stop, one tap aborts, and no menu opens', () => {
   const onAbortSession = vi.fn();
   render(<UiPreferencesProvider><ChatComposer {...props({ isLoading: true, onAbortSession, input: '', hasInput: false, attachedFiles: [] })} /></UiPreferencesProvider>);

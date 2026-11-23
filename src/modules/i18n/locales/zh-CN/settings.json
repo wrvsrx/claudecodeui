@@ -424,7 +424,21 @@
     },
     "account": {
       "claude": {
-        "description": "Anthropic Claude AI 助手"
+        "description": "Anthropic Claude AI 助手",
+        "profile": {
+          "label": "默认 Claude 端点",
+          "default": "服务器默认设置",
+          "description": "此默认设置仅适用于新的 Claude 聊天。现有聊天仍使用创建时的端点。",
+          "loading": "正在加载 Claude 端点设置…",
+          "saving": "正在保存 Claude 端点…",
+          "loadError": "无法加载 Claude 端点设置。",
+          "saveError": "无法确认更改。请重新加载以查看已保存的端点，或重试。",
+          "retry": "重试",
+          "reload": "重新加载设置",
+          "unavailable": "不可用的端点",
+          "unavailableDescription": "已保存的端点不再可用。请选择其他端点或恢复服务器默认设置，以开始新的 Claude 聊天。",
+          "configured": "已配置的端点：{{label}}。此处未验证凭据。"
+        }
       },
       "cursor": {
         "description": "Cursor AI 驱动的代码编辑器"

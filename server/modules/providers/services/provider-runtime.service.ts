@@ -19,6 +19,7 @@ type ProviderRuntimeServiceDependencies = {
   listProviders(): IProvider[];
   resolveProvider(provider: string): IProvider;
   resolveProviderSessionId(sessionId: string | null | undefined): string | null;
+  resolveClaudeSettingsProfileId(sessionId: string): string | undefined;
   resolveResumeModel(
     provider: LLMProvider,
     sessionId: string | undefined,
@@ -36,6 +37,7 @@ const defaultDependencies: ProviderRuntimeServiceDependencies = {
   listProviders: () => providerRegistry.listProviders(),
   resolveProvider: (provider) => providerRegistry.resolveProvider(provider),
   resolveProviderSessionId: (sessionId) => sessionsService.resolveProviderSessionId(sessionId),
+  resolveClaudeSettingsProfileId: (sessionId) => sessionsService.resolveClaudeSettingsProfileId(sessionId),
   resolveResumeModel: (provider, sessionId, requestedModel) =>
     providerModelsService.resolveResumeModel(provider, sessionId, requestedModel),
   getProviderModels: (provider) => providerModelsService.getProviderModels(provider),
@@ -57,6 +59,7 @@ export function createProviderRuntimeService(
     provider: IProvider,
   ): ProviderRuntimeContext => ({
     resolveProviderSessionId: dependencies.resolveProviderSessionId,
+    resolveClaudeSettingsProfileId: provider.id === 'claude' ? dependencies.resolveClaudeSettingsProfileId : undefined,
     resolveResumeModel: (sessionId, requestedModel) =>
       dependencies.resolveResumeModel(provider.id, sessionId, requestedModel),
     getProviderModels: async () => dependencies.getProviderModels(provider.id),

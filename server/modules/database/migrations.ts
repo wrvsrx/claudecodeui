@@ -399,6 +399,10 @@ const addProviderSessionIdMapping = (db: Database): void => {
   const sessionsTableInfo = getTableInfo(db, 'sessions');
   const columnNames = sessionsTableInfo.map((column) => column.name);
 
+  if (columnNames.includes('provider_session_id')) {
+    // NULL on an app-created session is intentional; it has not run yet.
+    return;
+  }
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'provider_session_id', 'TEXT');
   db.exec(`
     UPDATE sessions
@@ -544,6 +548,8 @@ export const runMigrations = (db: Database) => {
     addProviderSessionIdMapping(db);
     addSessionModelColumn(db);
     addSessionEffortColumn(db);
+    const sessionColumns = getTableInfo(db, 'sessions').map((column) => column.name);
+    addColumnToTableIfNotExists(db, 'sessions', sessionColumns, 'claude_settings_profile_id', 'TEXT');
     addForkedFromSessionIdColumn(db);
     ensureProjectsForSessionPaths(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);

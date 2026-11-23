@@ -20,7 +20,7 @@ export type {
 } from '@/modules/database/repositories/session-drafts.db.js';
 export { sessionsDb } from '@/modules/database/repositories/sessions.db.js';
 export { userDb } from '@/modules/database/repositories/users.js';
-// userPreferencesDb: used by the User module to persist the settings that used to live in browser localStorage.
+// userPreferencesDb: used by User for browser settings and Providers for account Claude settings.
 export { userPreferencesDb } from '@/modules/database/repositories/user-preferences.db.js';
 export { vapidKeysDb } from '@/modules/database/repositories/vapid-keys.js';
 export { scheduledMessagesDb } from './repositories/scheduled-messages.db.js';

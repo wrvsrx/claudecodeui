@@ -5,7 +5,7 @@ import express from 'express';
 
 import type { ProviderRunFunction } from '@/shared/types.js';
 
-import { normalizeProjectPath } from '../../shared/utils.js';
+import { AppError, normalizeProjectPath } from '../../shared/utils.js';
 
 /** The providers an Agent API run can start: the ones with a runtime and a model catalog. */
 const AGENT_RUN_PROVIDERS = ['claude', 'cursor', 'codex', 'opencode'];
@@ -33,7 +33,7 @@ type AgentRouterDependencies = {
   sessions: {
     getSessionById(sessionId: string): AgentSessionRow | null;
     getSessionByProviderSessionId(providerSessionId: string): AgentSessionRow | null;
-    createAppSession(provider: string, projectPath: string, initialMessage: string): { sessionId: string };
+    createAppSession(provider: string, projectPath: string, initialMessage: string, userId: number): { sessionId: string };
   };
   /** The live-run registry the chat socket uses; registering here is what puts an API run on the running-sessions list. */
   runs: Pick<typeof import('../websocket/index.js').chatRunRegistry, 'startRun' | 'completeRunIfCurrent' | 'isProcessing'>;
@@ -996,7 +996,7 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
       // the provider-native id is mapped onto it when the runtime announces it.
       const appSessionId = sessionRow
         ? sessionRow.session_id
-        : sessionGateway.createAppSession(provider, finalProjectPath, message.trim()).sessionId;
+        : sessionGateway.createAppSession(provider, finalProjectPath, message.trim(), req.user.id).sessionId;
 
       // Registered before any header goes out, so a session already mid-run
       // is refused with a plain 409 rather than an empty stream. The HTTP
@@ -1338,6 +1338,10 @@ export function createAgentRouter(dependencies: AgentRouterDependencies): expres
       if (finalProjectPath && cleanup && githubUrl && clonedProjectCreated) {
         const sessionIdForCleanup = run ? run.writer.getSessionId() : null;
         cleanupProject(finalProjectPath, sessionIdForCleanup);
+      }
+
+      if (!writer && !res.headersSent && error instanceof AppError) {
+        return res.status(error.statusCode).json({ success: false, code: error.code, error: error.message });
       }
 
       if (stream) {

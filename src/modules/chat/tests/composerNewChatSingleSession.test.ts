@@ -5,7 +5,7 @@ import { afterEach, beforeEach, test, vi } from 'vitest';
 
 import '@/modules/i18n';
 import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState';
-import type { PermissionMode, Project, ProjectSession } from '@/shared/types';
+import type { LLMProvider, PermissionMode, Project, ProjectSession } from '@/shared/types';
 
 /**
  * The first message of a brand-new chat allocates its session id with
@@ -29,7 +29,7 @@ const jsonResponse = (body: unknown, status = 200) =>
 
 // Answers the session gateway only when the test says so, the way a busy
 // server leaves the first request hanging while the user tries again.
-const releaseCreates = async (status = 201) => {
+const releaseCreates = async (status = 201, error: unknown = 'boom') => {
   const waiting = pendingCreates;
   pendingCreates = [];
   await act(async () => {
@@ -37,7 +37,7 @@ const releaseCreates = async (status = 201) => {
       createdCount += 1;
       pending.resolve(status === 201
         ? jsonResponse({ success: true, data: { sessionId: `session-${createdCount}`, sessionName: 'hello' } }, 201)
-        : jsonResponse({ success: false, error: 'boom' }, status));
+        : jsonResponse({ success: false, error }, status));
     }
     // Let every awaiting submit run to its end.
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -47,15 +47,19 @@ const releaseCreates = async (status = 201) => {
 const createRequests = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls
   .filter(([url, init]) => String(url) === '/api/providers/sessions' && (init as RequestInit | undefined)?.method === 'POST');
 
-const renderComposer = (initialSession: ProjectSession | null) => {
+const renderComposer = (
+  initialSession: ProjectSession | null,
+  provider: LLMProvider = 'claude',
+) => {
   const sent: Array<{ type: string; sessionId?: string; content?: string }> = [];
   const established: string[] = [];
+  const addMessage = vi.fn();
   const view = renderHook(({ session }: { session: ProjectSession | null }) =>
     useChatComposerState({
       selectedProject: PROJECT,
       selectedSession: session,
       currentSessionId: session?.id ?? null,
-      provider: 'claude',
+      provider,
       permissionMode: 'default',
       cyclePermissionMode: () => undefined,
       resolvePermissionModeForProvider: () => 'default' as PermissionMode,
@@ -67,12 +71,12 @@ const renderComposer = (initialSession: ProjectSession | null) => {
       sendMessage: (message) => { sent.push(message as { type: string }); },
       onSessionEstablished: (sessionId) => { established.push(sessionId); },
       scrollToBottom: () => undefined,
-      addMessage: () => undefined,
+      addMessage,
       setIsUserScrolledUp: () => undefined,
       setPendingPermissionRequests: () => undefined,
     }),
   { initialProps: { session: initialSession } });
-  return { view, established, chatSends: () => sent.filter((message) => message.type === 'chat.send') };
+  return { view, established, addMessage, chatSends: () => sent.filter((message) => message.type === 'chat.send') };
 };
 
 const renderNewChat = () => renderComposer(null);
@@ -129,14 +133,16 @@ test('submitting again while the new chat\'s session is being created allocates 
   assert.equal(secondSubmit.preventDefault.mock.calls.length, 1);
 });
 
-test('a failed session creation does not block the retry', async () => {
-  const { view, established, chatSends } = renderNewChat();
+test('a removed account default is explained and does not block a retry', async () => {
+  const { view, established, addMessage, chatSends } = renderNewChat();
   await act(async () => { view.result.current.setInput('hello'); });
 
   await act(async () => {
     void view.result.current.handleSubmit({ preventDefault: () => undefined } as never);
   });
-  await releaseCreates(500);
+  const message = 'The saved Claude profile is no longer available. Choose another in Claude Account settings.';
+  await releaseCreates(409, { message });
+  assert.match(addMessage.mock.lastCall?.[0]?.content ?? '', /Choose another in Claude Account settings/);
   assert.equal(chatSends().length, 0);
   assert.equal(view.result.current.input, 'hello', 'the text stays for the retry');
 
@@ -197,4 +203,36 @@ test('a pending new chat does not hold up a submit in another session', async ()
     [['session-other', 'elsewhere']],
   );
   await releaseCreates();
+});
+
+test.each(['claude', 'codex'] as const)('creates %s chat without an account profile override', async (provider) => {
+  const { view, chatSends } = renderComposer(null, provider);
+  await act(async () => { view.result.current.setInput('hello'); });
+  await act(async () => {
+    void view.result.current.handleSubmit({ preventDefault: () => undefined } as never);
+  });
+  await releaseCreates();
+
+  const requests = createRequests(fetchMock);
+  assert.equal(requests.length, 1);
+  assert.deepEqual(JSON.parse(String(requests[0][1].body)), {
+    provider,
+    projectPath: PROJECT.fullPath,
+    initialMessage: 'hello',
+  });
+  assert.equal(chatSends().length, 1);
+  assert.doesNotMatch(JSON.stringify(chatSends()[0]), /claudeSettingsProfile/);
+});
+
+test('does not resend a profile when continuing a Claude session', async () => {
+  const { view, chatSends } = renderComposer({ id: 'session-existing' });
+  await act(async () => { view.result.current.setInput('hello'); });
+  await act(async () => {
+    await view.result.current.handleSubmit({ preventDefault: () => undefined } as never);
+  });
+
+  assert.equal(createRequests(fetchMock).length, 0);
+  assert.equal(chatSends().length, 1);
+  assert.equal(chatSends()[0].sessionId, 'session-existing');
+  assert.doesNotMatch(JSON.stringify(chatSends()[0]), /claudeSettingsProfile/);
 });

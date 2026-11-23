@@ -18,7 +18,10 @@ vi.mock('@/shared/api', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
   return {
     ...actual,
-    api: { providers: { cliStatus: () => new Promise<Response>(() => {}) } },
+    api: { providers: {
+      cliStatus: () => new Promise<Response>(() => {}),
+      claudeSettings: async () => Response.json({ profiles: [], selectedProfile: null }),
+    } },
   };
 });
 
@@ -35,7 +38,7 @@ const renderClaudeAccount = (authStatus: ProviderAuthStatus) =>
   render(<AccountContent agent="claude" authStatus={authStatus} onLogin={() => {}} />);
 
 describe('AccountContent subscription override notice', () => {
-  it('warns which variable is bypassing the login, where it came from, and how to fix it (process env)', () => {
+  it('warns which variable is bypassing the login, where it came from, and how to fix it (process env)', async () => {
     renderClaudeAccount(apiKeyStatus({
       subscriptionOverride: {
         variable: 'ANTHROPIC_API_KEY',
@@ -44,7 +47,7 @@ describe('AccountContent subscription override notice', () => {
       },
     }));
 
-    const notice = screen.getByTestId(NOTICE);
+    const notice = await screen.findByTestId(NOTICE);
     expect(notice.getAttribute('role')).toBe('alert');
     expect(notice.textContent).toContain('Your subscription login is not being used');
     expect(notice.textContent).toContain('ANTHROPIC_API_KEY is set in the server environment');
@@ -52,10 +55,10 @@ describe('AccountContent subscription override notice', () => {
     expect(notice.textContent).toContain('unset ANTHROPIC_API_KEY');
     expect(notice.textContent).toContain('restart the server');
     // The existing status line is untouched.
-    expect(screen.getByText('Logged in as API Key Auth')).toBeTruthy();
+    expect(await screen.findByText('Logged in as API Key Auth')).toBeTruthy();
   });
 
-  it('points at ~/.claude/settings.json when the key lives there, and drops the email when unknown', () => {
+  it('points at ~/.claude/settings.json when the key lives there, and drops the email when unknown', async () => {
     renderClaudeAccount(apiKeyStatus({
       subscriptionOverride: {
         variable: 'ANTHROPIC_AUTH_TOKEN',
@@ -64,33 +67,34 @@ describe('AccountContent subscription override notice', () => {
       },
     }));
 
-    const text = screen.getByTestId(NOTICE).textContent ?? '';
+    const text = (await screen.findByTestId(NOTICE)).textContent ?? '';
     expect(text).toContain('ANTHROPIC_AUTH_TOKEN is set in ~/.claude/settings.json');
     expect(text).toContain('remove ANTHROPIC_AUTH_TOKEN from the "env" block of ~/.claude/settings.json');
     expect(text).not.toContain('restart the server');
     expect(text).not.toContain('(');
   });
 
-  it('shows nothing extra for a plain API key login', () => {
+  it('shows nothing extra for a plain API key login', async () => {
     renderClaudeAccount(apiKeyStatus());
 
     expect(screen.queryByTestId(NOTICE)).toBeNull();
-    expect(screen.getByText('Logged in as API Key Auth')).toBeTruthy();
+    expect(await screen.findByText('Logged in as API Key Auth')).toBeTruthy();
   });
 
-  it('shows nothing extra for a plain subscription login', () => {
+  it('shows nothing extra for a plain subscription login', async () => {
     renderClaudeAccount(apiKeyStatus({ email: 'someone@example.com', method: 'credentials_file' }));
 
     expect(screen.queryByTestId(NOTICE)).toBeNull();
-    expect(screen.getByText('Logged in as someone@example.com')).toBeTruthy();
+    expect(await screen.findByText('Logged in as someone@example.com')).toBeTruthy();
   });
 
-  it('holds the notice back while the status is still being checked', () => {
+  it('holds the notice back while the status is still being checked', async () => {
     renderClaudeAccount(apiKeyStatus({
       loading: true,
       subscriptionOverride: { variable: 'ANTHROPIC_API_KEY', source: 'process_env', subscriptionEmail: null },
     }));
 
+    await screen.findByText('Checking authentication status...');
     expect(screen.queryByTestId(NOTICE)).toBeNull();
   });
 });

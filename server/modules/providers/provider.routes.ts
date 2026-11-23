@@ -11,6 +11,7 @@ import { providerSkillsService } from '@/modules/providers/services/skills.servi
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sideQuestionsService } from '@/modules/providers/services/side-questions.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
+import { requireAuthenticatedUserId } from '@/shared/index.js';
 import type {
   CustomProviderModelEffort,
   CustomProviderModelInput,
@@ -902,7 +903,12 @@ router.post(
     const provider = parseProvider(body.provider);
     const projectPath = typeof body.projectPath === 'string' ? body.projectPath : '';
     const initialMessage = typeof body.initialMessage === 'string' ? body.initialMessage : '';
-    const result = sessionsService.createAppSession(provider, projectPath, initialMessage);
+    if (Object.hasOwn(body, 'claudeSettingsProfile')) {
+      throw new AppError('Set the Claude settings profile in Account settings, not when creating a session.', {
+        code: 'INVALID_CLAUDE_SETTINGS_PROFILE', statusCode: 400,
+      });
+    }
+    const result = sessionsService.createAppSession(provider, projectPath, initialMessage, requireAuthenticatedUserId(req));
     res.status(201).json(createApiSuccessResponse(result));
   }),
 );

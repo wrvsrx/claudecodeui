@@ -119,6 +119,7 @@ type ShellWebSocketDependencies = {
     sessionId: string,
     provider: string,
   ) => string | null | undefined;
+  hasClaudeSettingsProfile?: (sessionId: string) => boolean;
   spawnPty?: typeof pty.spawn;
 };
 
@@ -557,6 +558,13 @@ export function handleShellConnection(
           readBoolean(data.isPlainShell) ||
           (!!initialCommand && !hasSession) ||
           provider === 'plain-shell';
+
+        // The Shell builds its own command line outside the SDK. Never resume
+        // a bound session here with default credentials.
+        if (sessionId && readBoolean(data.hasSession) && dependencies.hasClaudeSettingsProfile?.(sessionId)) {
+          ws.send(JSON.stringify({ type: 'error', message: 'Resume this Claude settings profile in Chat, not Shell.' }));
+          return;
+        }
 
         urlDetectionBuffer = '';
         announcedAuthUrls.clear();

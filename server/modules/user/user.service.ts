@@ -1,3 +1,4 @@
+import { CLAUDE_SETTINGS_PROFILE_PREFERENCE_KEY } from '@/shared/index.js';
 import type { QueuedChatMessage } from '@/shared/types.js';
 import { AppError } from '@/shared/utils.js';
 
@@ -98,6 +99,11 @@ const readPreferenceUpdates = (body: unknown): Record<string, unknown> => {
 
   const updates = body as Record<string, unknown>;
   for (const key of Object.keys(updates)) {
+    if (key === CLAUDE_SETTINGS_PROFILE_PREFERENCE_KEY) {
+      throw new AppError('Use /api/claude-settings to change the Claude settings profile.', {
+        code: 'INVALID_PREFERENCE_KEY', statusCode: 400,
+      });
+    }
     if (!key || key.length > MAX_KEY_LENGTH) {
       throw new AppError('Preference keys must be 1-200 characters', {
         code: 'INVALID_PREFERENCE_KEY',

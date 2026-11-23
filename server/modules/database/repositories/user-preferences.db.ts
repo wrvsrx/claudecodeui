@@ -19,7 +19,16 @@ function decodePreference(row: PreferenceRow): [string, unknown] | null {
   }
 }
 
+// User stores browser preferences here; Providers stores the server-managed Claude profile.
 export const userPreferencesDb = {
+  /** Reads one preference for Providers. Invalid stored JSON throws rather than falling back to a default. */
+  getPreference(userId: number, key: string): unknown {
+    const row = getConnection().prepare(
+      'SELECT preference_value FROM user_preferences WHERE user_id = ? AND preference_key = ?',
+    ).get(userId, key) as Pick<PreferenceRow, 'preference_value'> | undefined;
+    return row === undefined ? undefined : JSON.parse(row.preference_value) as unknown;
+  },
+
   /**
    * Returns every preference the user has ever set, as one object.
    *

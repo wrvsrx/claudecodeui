@@ -457,6 +457,9 @@ export const api = {
     updateCli: (provider: string) =>
       post(`/api/providers/${encodeURIComponent(provider)}/cli/update`),
     claudeSettingsPermissions: () => get('/api/providers/claude/settings-permissions'),
+    claudeSettings: (options: ApiRequestOptions = {}) => get('/api/claude-settings', options),
+    updateClaudeSettings: (selectedProfile: string | null, options: ApiRequestOptions = {}) =>
+      put('/api/claude-settings', { selectedProfile }, options),
 
     models: (provider: string) => get(`/api/providers/${provider}/models`),
     createModel: (provider: string, input: unknown) =>

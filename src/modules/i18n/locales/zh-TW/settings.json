@@ -399,7 +399,21 @@
     },
     "account": {
       "claude": {
-        "description": "Anthropic Claude AI 助手"
+        "description": "Anthropic Claude AI 助手",
+        "profile": {
+          "label": "預設 Claude 端點",
+          "default": "伺服器預設設定",
+          "description": "此預設設定僅適用於新的 Claude 聊天。現有聊天會繼續使用建立時的端點。",
+          "loading": "正在載入 Claude 端點設定…",
+          "saving": "正在儲存 Claude 端點…",
+          "loadError": "無法載入 Claude 端點設定。",
+          "saveError": "無法確認變更。請重新載入以查看已儲存的端點，或重試。",
+          "retry": "重試",
+          "reload": "重新載入設定",
+          "unavailable": "無法使用的端點",
+          "unavailableDescription": "已儲存的端點已無法使用。請選擇其他端點或還原伺服器預設設定，以開始新的 Claude 聊天。",
+          "configured": "已設定的端點：{{label}}。此處未驗證憑證。"
+        }
       },
       "cursor": {
         "description": "Cursor AI 驅動的程式碼編輯器"

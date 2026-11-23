@@ -446,7 +446,21 @@
     },
     "account": {
       "claude": {
-        "description": "Anthropic Claude AI assistant"
+        "description": "Anthropic Claude AI assistant",
+        "profile": {
+          "label": "Default Claude endpoint",
+          "default": "Server default",
+          "description": "This default applies only to new Claude chats. Existing chats keep the endpoint they started with.",
+          "loading": "Loading Claude endpoint settings…",
+          "saving": "Saving Claude endpoint…",
+          "loadError": "Could not load Claude endpoint settings.",
+          "saveError": "Could not confirm the change. Reload to check which endpoint is saved, or try again.",
+          "retry": "Try again",
+          "reload": "Reload settings",
+          "unavailable": "Unavailable endpoint",
+          "unavailableDescription": "Your saved endpoint is no longer available. Choose another endpoint or reset to the server default to start new Claude chats.",
+          "configured": "Configured endpoint: {{label}}. Credentials have not been verified here."
+        }
       },
       "cursor": {
         "description": "Cursor AI-powered code editor"

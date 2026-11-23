@@ -156,6 +156,30 @@ test('an API run is registered like a chat send: listed while running, streamed 
   });
 });
 
+test('new API runs pass the API key owner, not a body userId, to the session gateway', async () => {
+  await withIsolatedDatabase(async () => {
+    const runtime = createHeldRuntime();
+    runtime.release();
+    const dependencies = createDependencies(runtime.queryClaude);
+    dependencies.platformMode = false;
+    dependencies.apiKeys.validateApiKey = (key) => key === 'test-key' ? { id: 42 } : undefined;
+    const createSession = dependencies.sessions.createAppSession;
+    let receivedUserId: number | undefined;
+    dependencies.sessions.createAppSession = (provider, projectPath, initialMessage, userId) => {
+      receivedUserId = userId;
+      return createSession(provider, projectPath, initialMessage, userId);
+    };
+    await withAgentServer(dependencies, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/agent`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'test-key' },
+        body: JSON.stringify({ projectPath: '/home/test/project', message: 'Run it', stream: false, userId: 1 }),
+      });
+      assert.equal(response.status, 200);
+      assert.equal(receivedUserId, 42);
+    });
+  });
+});
+
 test('a second API request on a session mid-run is refused with 409, as the chat socket refuses it', async () => {
   await withIsolatedDatabase(async () => {
     const runtime = createHeldRuntime();

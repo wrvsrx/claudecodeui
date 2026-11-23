@@ -1,6 +1,8 @@
+import { useId } from 'react';
 import { AlertTriangle, LogIn } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
+import { useClaudeAccountSettings } from '@/modules/settings/hooks/useClaudeAccountSettings';
 import ProviderCliVersion from '@/modules/settings/tabs/agents-settings/sections/content/ProviderCliVersion';
 import { Badge, Button, LLMProviderLogo } from '@/shared/ui';
 import type { AgentProvider, ProviderAuthStatus, ProviderAuthSubscriptionOverride } from '@/shared/types';
@@ -95,10 +97,19 @@ function SubscriptionOverrideNotice({ override }: SubscriptionOverrideNoticeProp
   );
 }
 
-/** Rendered by AgentCategoryContentSection for the "account" category to show sign-in state for one provider. */
+/** Rendered by AgentCategoryContentSection for the "account" category to show sign-in state or Claude’s configured endpoint. */
 export default function AccountContent({ agent, authStatus, onLogin }: AccountContentProps) {
   const { t } = useTranslation('settings');
   const config = agentConfig[agent];
+  const isClaude = agent === 'claude';
+  const { profiles, selectedProfile, hasLoaded, status, selectProfile, reload } = useClaudeAccountSettings(isClaude);
+  const descriptionId = useId();
+  const hasSelection = selectedProfile !== null;
+  const selectedLabel = profiles.find(({ id }) => id === selectedProfile)?.label;
+  const unavailable = hasSelection && selectedLabel === undefined;
+  // The CLI login only describes the server default, not the selected profile.
+  const showDefaultAuth = !isClaude || (hasLoaded && !hasSelection);
+  const showPicker = isClaude && (profiles.length > 0 || hasSelection);
 
   return (
     <div className="space-y-6">
@@ -116,41 +127,100 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
 
       <div className={`${config.bgClass} border ${config.borderClass} rounded-lg p-4`}>
         <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <div className={`font-medium ${config.textClass}`}>
-                {t('agents.connectionStatus')}
+          {isClaude && status === 'loading' && (
+            <p role="status" className={`text-sm ${config.subtextClass}`}>
+              {t('agents.account.claude.profile.loading')}
+            </p>
+          )}
+          {isClaude && status === 'loadError' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="alert" className="text-sm text-destructive">{t('agents.account.claude.profile.loadError')}</p>
+              <Button type="button" size="sm" variant="outline" onClick={reload}>
+                {t('agents.account.claude.profile.retry')}
+              </Button>
+            </div>
+          )}
+          {showPicker && (
+            <div className="space-y-2" aria-busy={status === 'saving'}>
+              <label className={`flex flex-wrap items-center gap-2 font-medium ${config.textClass}`}>
+                {t('agents.account.claude.profile.label')}
+                <select
+                  className="min-w-0 max-w-full rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground disabled:opacity-50"
+                  aria-describedby={descriptionId}
+                  value={selectedProfile ?? ''}
+                  disabled={status === 'saving'}
+                  onChange={(event) => selectProfile(event.target.value || null)}
+                >
+                  <option value="">{t('agents.account.claude.profile.default')}</option>
+                  {unavailable && (
+                    <option value={selectedProfile} disabled>{t('agents.account.claude.profile.unavailable')}</option>
+                  )}
+                  {profiles.map(({ id, label }) => <option key={id} value={id}>{label}</option>)}
+                </select>
+              </label>
+              <p id={descriptionId} className={`text-sm ${config.subtextClass}`}>
+                {t('agents.account.claude.profile.description')}
+              </p>
+              {unavailable && (
+                <p role="alert" className="text-sm text-destructive">{t('agents.account.claude.profile.unavailableDescription')}</p>
+              )}
+              {selectedLabel && (
+                <p className={`text-sm ${config.subtextClass}`}>
+                  {t('agents.account.claude.profile.configured', { label: selectedLabel })}
+                </p>
+              )}
+            </div>
+          )}
+          {isClaude && status === 'saving' && (
+            <p role="status" className={`text-sm ${config.subtextClass}`}>
+              {t('agents.account.claude.profile.saving')}
+            </p>
+          )}
+          {isClaude && status === 'saveError' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <p role="alert" className="text-sm text-destructive">{t('agents.account.claude.profile.saveError')}</p>
+              <Button type="button" size="sm" variant="outline" onClick={reload}>
+                {t('agents.account.claude.profile.reload')}
+              </Button>
+            </div>
+          )}
+          {showDefaultAuth && (
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <div className={`font-medium ${config.textClass}`}>
+                  {t('agents.connectionStatus')}
+                </div>
+                <div className={`text-sm ${config.subtextClass}`}>
+                  {authStatus.loading ? (
+                    t('agents.authStatus.checkingAuth')
+                  ) : authStatus.authenticated ? (
+                    t('agents.authStatus.loggedInAs', {
+                      email: authStatus.email || t('agents.authStatus.authenticatedUser'),
+                    })
+                  ) : (
+                    t('agents.authStatus.notConnected')
+                  )}
+                </div>
               </div>
-              <div className={`text-sm ${config.subtextClass}`}>
+              <div>
                 {authStatus.loading ? (
-                  t('agents.authStatus.checkingAuth')
+                  <Badge variant="secondary" className="bg-muted">
+                    {t('agents.authStatus.checking')}
+                  </Badge>
                 ) : authStatus.authenticated ? (
-                  t('agents.authStatus.loggedInAs', {
-                    email: authStatus.email || t('agents.authStatus.authenticatedUser'),
-                  })
+                  <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
+                    {t('agents.authStatus.connected')}
+                  </Badge>
                 ) : (
-                  t('agents.authStatus.notConnected')
+                  <Badge variant="secondary" className="bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
+                    {t('agents.authStatus.disconnected')}
+                  </Badge>
                 )}
               </div>
             </div>
-            <div>
-              {authStatus.loading ? (
-                <Badge variant="secondary" className="bg-muted">
-                  {t('agents.authStatus.checking')}
-                </Badge>
-              ) : authStatus.authenticated ? (
-                <Badge variant="secondary" className="bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
-                  {t('agents.authStatus.connected')}
-                </Badge>
-              ) : (
-                <Badge variant="secondary" className="bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300">
-                  {t('agents.authStatus.disconnected')}
-                </Badge>
-              )}
-            </div>
-          </div>
+          )}
 
-          {!authStatus.loading && authStatus.subscriptionOverride && (
+          {showDefaultAuth && !authStatus.loading && authStatus.subscriptionOverride && (
             <SubscriptionOverrideNotice override={authStatus.subscriptionOverride} />
           )}
           <ProviderCliVersion
@@ -161,7 +231,7 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
             subtextClass={config.subtextClass}
           />
 
-          {authStatus.method !== 'api_key' && (
+          {showDefaultAuth && authStatus.method !== 'api_key' && (
             <div className="border-t border-border/50 pt-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -186,7 +256,7 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
             </div>
           )}
 
-          {authStatus.error && (
+          {showDefaultAuth && authStatus.error && (
             <div className="border-t border-border/50 pt-4">
               <div className="text-sm text-red-600 dark:text-red-400">
                 {t('agents.error', { error: authStatus.error })}

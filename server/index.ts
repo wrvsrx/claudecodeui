@@ -11,10 +11,12 @@ import cors from 'cors';
 
 import { AppError, findApplicationRoot, getModuleDirectory, IS_PLATFORM, terminalTextStyles } from '@/shared/utils.js';
 import {
+    claudeSettingsProfilesRoutes,
     closeSessionsWatcher,
     initializeSessionsWatcher,
     providerRuntimeService,
     reapOrphanedOpenCodeServers,
+    sessionsService,
 } from '@/modules/providers/index.js';
 import { chatRunRegistry, createWebSocketServer } from '@/modules/websocket/index.js';
 
@@ -119,6 +121,7 @@ createWebSocketServer(server, {
         runtime: providerRuntimeService,
     },
     shell: {
+        hasClaudeSettingsProfile: (sessionId) => sessionsService.resolveClaudeSettingsProfileId(sessionId) !== undefined,
         resolveProviderSessionId: (sessionId, provider) => {
             const dbSession = sessionsDb.getSessionById(sessionId);
             if (dbSession) {
@@ -227,6 +230,7 @@ app.use('/api/browser-use', authenticateToken, browserUseRoutes);
 
 // Unified provider MCP routes (protected)
 app.use('/api/providers', authenticateToken, providerRoutes);
+app.use('/api/claude-settings', authenticateToken, claudeSettingsProfilesRoutes);
 app.use('/api/scheduled-messages', authenticateToken, scheduledMessagesRoutes);
 
 // Agent API Routes (uses API key authentication)

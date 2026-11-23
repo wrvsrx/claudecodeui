@@ -30,6 +30,7 @@ import {
   CLAUDE_ULTRACODE_EFFORT
 } from '@/modules/providers/list/claude/claude-models.provider.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
+import { claudeSettingsProfilesService } from '@/modules/providers/services/claude-settings-profiles.service.js';
 import { askClaudeSideQuestion } from '@/modules/providers/list/claude/claude-side-question.provider.js';
 import {
   createNotificationEvent,
@@ -1327,6 +1328,16 @@ async function queryClaudeSDK(
       effortModels,
     });
 
+    // `options` may originate in a chat frame. Never read an SDK settings
+    // object, path, or profile id from it: only the persisted binding counts.
+    const profileId = sessionId ? context.resolveClaudeSettingsProfileId?.(sessionId) : undefined;
+    if (profileId !== undefined) {
+      sdkOptions.settings = claudeSettingsProfilesService.applyToSdkOptions(profileId, {
+        settings: sdkOptions.settings,
+        env: sdkOptions.env,
+      });
+    }
+
     const mcpServers = await loadMcpConfig(options.cwd);
     if (mcpServers) {
       sdkOptions.mcpServers = mcpServers;
@@ -2118,6 +2129,19 @@ async function askSideQuestion(
   context: ProviderRuntimeContext,
 ): Promise<SideQuestionOutcome> {
   const session = getSession(request.appSessionId);
+  const askOnFork = (): Promise<SideQuestionOutcome> => {
+    // Passing the full profile to the read-only fork could run its hooks or
+    // plugins. Do not fall back to a new process with different credentials.
+    if (context.resolveClaudeSettingsProfileId?.(request.appSessionId) !== undefined) {
+      return Promise.resolve({
+        status: 'error', error: 'Side questions for this profile require a live Claude session.', answer: '',
+      });
+    }
+    return askClaudeSideQuestion(request, sink, {
+      createQuery: context.createQuery,
+      liveTasks: backgroundWork.outstanding(request.appSessionId),
+    });
+  };
   // The SDK does not type this method (see above), so the instance is read
   // through the local type rather than `ClaudeQuery`. Kept alongside the
   // original (`session.instance`, typed `ClaudeQuery`) so the `finally`
@@ -2166,10 +2190,7 @@ async function askSideQuestion(
       // other code while this call is in flight — so TS's belief that this
       // comparison can never be true is the stale part, not the check.
       if (!request.signal?.aborted && (session.inputReleased as unknown) === true) {
-        return askClaudeSideQuestion(request, sink, {
-          createQuery: context.createQuery,
-          liveTasks: backgroundWork.outstanding(request.appSessionId),
-        });
+        return askOnFork();
       }
       return { status: 'error', error: errorMessage(error), answer: '' };
     } finally {
@@ -2198,10 +2219,7 @@ async function askSideQuestion(
     }
   }
 
-  return askClaudeSideQuestion(request, sink, {
-    createQuery: context.createQuery,
-    liveTasks: backgroundWork.outstanding(request.appSessionId),
-  });
+  return askOnFork();
 }
 
 export const claudeRuntime = {

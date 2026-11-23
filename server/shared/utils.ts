@@ -92,6 +92,27 @@ export function asyncHandler(
   };
 }
 
+/**
+ * Reads the local account id set by Auth middleware for Providers routes. Call
+ * only after that middleware; never use a caller-supplied body or query id.
+ */
+export function requireAuthenticatedUserId(request: Request): number {
+  const id = (request as Request & { user?: { id?: number } }).user?.id;
+  if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+    throw new AppError('Authentication required.', { code: 'AUTH_TOKEN_INVALID', statusCode: 401 });
+  }
+  return id;
+}
+
+// ---------------------------
+//----------------- SERVER-MANAGED PREFERENCE KEYS ------------
+/**
+ * Providers stores the Claude profile under this account preference key. User
+ * preferences must not write this key through the generic patch route: only the
+ * dedicated Claude settings endpoint may write it after allowlist validation.
+ */
+export const CLAUDE_SETTINGS_PROFILE_PREFERENCE_KEY = 'claudeSettingsProfile';
+
 // ---------------------------
 //----------------- QUEUED CHAT MESSAGE UTILITIES ------------
 /**
