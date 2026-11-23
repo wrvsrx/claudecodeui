@@ -30,7 +30,6 @@ import {
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
-import { ClaudeProviderSwitch } from '@/modules/chat/modals/ClaudeProviderSwitch';
 
 type ChatInterfaceProps = {
   isActive: boolean;
@@ -500,12 +499,6 @@ function ChatInterface({
   return (
     <PermissionContext.Provider value={permissionContextValue}>
       <div className="flex h-full min-h-0 flex-col">
-        {selectedSession?.__provider === 'claude' && (
-          <div className="flex shrink-0 justify-end border-b px-2 py-1">
-            <ClaudeProviderSwitch key={selectedSession.id} sessionId={selectedSession.id}
-              disabled={isProcessing || Boolean(sessionActivity?.tasks?.length)} onSwitch={applyClaudeSessionSwitch} />
-          </div>
-        )}
         <MarkdownWorkspaceContext.Provider value={markdownWorkspaceValue}>
           <TranscriptSessionContext.Provider value={transcriptSessionValue}>
             <ChatMessagesPane
@@ -601,6 +594,9 @@ function ChatInterface({
           availableModelOptions={currentProviderModelOptions}
           onSelectModel={handleSelectComposerModel}
           modelsLoading={providerModelsLoading}
+          claudeProviderSwitch={selectedSession?.__provider === 'claude'
+            ? { sessionId: selectedSession.id, onSwitch: applyClaudeSessionSwitch }
+            : undefined}
           tokenBudget={tokenBudget}
           onShowTokenUsage={showCostModal}
           onClearContext={supportsContextClearing && (currentSessionId || selectedSession?.id) ? handleClearContextClick : undefined}

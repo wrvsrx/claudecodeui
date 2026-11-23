@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ChangeEvent,
   ClipboardEvent,
+  ComponentProps,
   FormEvent,
   KeyboardEvent,
   MouseEvent,
@@ -40,6 +41,7 @@ import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageLi
 import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
 import ComposerSendMenu from '@/modules/chat/composer/ComposerSendMenu';
+import { ClaudeProviderSwitch } from '@/modules/chat/modals/ClaudeProviderSwitch';
 
 type MentionableFile = {
   name: string;
@@ -73,6 +75,8 @@ type ChatComposerProps = {
   availableModelOptions: ProviderModelOption[];
   onSelectModel: (model: string) => void;
   modelsLoading: boolean;
+  /** Present only when the composer belongs to an existing Claude session. */
+  claudeProviderSwitch?: Pick<ComponentProps<typeof ClaudeProviderSwitch>, 'sessionId' | 'onSwitch'>;
   tokenBudget: Record<string, unknown> | null;
   onShowTokenUsage: () => void;
   /** Clears the session's context; absent when the session cannot be cleared. */
@@ -140,7 +144,7 @@ type ChatComposerProps = {
 /**
  * Rendered by chat's ChatInterface as the whole input area: textarea, pending
  * attachments, queued message, permission banner, voice input and the
- * model/permission popovers that drive the next turn.
+ * model, Claude provider, and permission controls that drive the next turn.
  */
 export default function ChatComposer({
   pendingPermissionRequests,
@@ -161,6 +165,7 @@ export default function ChatComposer({
   availableModelOptions,
   onSelectModel,
   modelsLoading,
+  claudeProviderSwitch,
   tokenBudget,
   onClearContext,
   onShowTokenUsage,
@@ -533,7 +538,7 @@ export default function ChatComposer({
 
           </PromptInputTools>
 
-          <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+          <div className="ml-auto flex max-w-full shrink-0 items-center gap-1.5 sm:gap-2">
             <ScheduleMessagePopover
               disabled={!input.trim()}
               onSchedule={onScheduleMessage}
@@ -548,6 +553,13 @@ export default function ChatComposer({
               onSelectModel={onSelectModel}
               modelsLoading={modelsLoading}
             />
+
+            {claudeProviderSwitch && (
+              <ClaudeProviderSwitch
+                {...claudeProviderSwitch}
+                disabled={isLoading || Boolean(activity?.tasks?.length)}
+              />
+            )}
 
             <ComposerPermissionMenu
               permissionMode={permissionMode}

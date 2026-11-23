@@ -111,6 +111,23 @@ test('idle: the plain send button, and no send menu', () => {
 test('the composer does not render an account-level Claude settings picker', () => {
   render(<UiPreferencesProvider><ChatComposer {...props({})} /></UiPreferencesProvider>);
   assert.equal(screen.queryByRole('combobox', { name: /Claude (settings|endpoint)/i }), null);
+  assert.equal(screen.queryByRole('button', { name: /Switch Claude provider/i }), null);
+});
+
+test('the existing Claude session profile sits beside the model and cannot be switched during background work', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ success: true, data: {
+    selectedProfile: 'gateway', revision: 3, model: null, effort: null, profiles: [{ id: 'gateway', label: 'Gateway' }],
+  } })));
+  render(<UiPreferencesProvider><ChatComposer {...props({
+    claudeProviderSwitch: { sessionId: 'claude-session', onSwitch: vi.fn() },
+    availableModelOptions: [{ value: 'test-model', label: 'Test Model' }],
+    activity: { ...BACKGROUND, tasks: [{ taskId: 'task', toolUseId: 'tool', taskType: 'local_bash', description: 'Running', startedAt: 1 }] },
+  })} /></UiPreferencesProvider>);
+
+  const model = screen.getByRole('button', { name: 'Select model and reasoning effort' });
+  const provider = await screen.findByRole<HTMLButtonElement>('button', { name: 'Gateway: Switch Claude provider' });
+  assert.equal(model.nextElementSibling, provider);
+  assert.equal(provider.disabled, true);
 });
 
 test('turn running, composer empty: the green submit button is Stop, one tap aborts, and no menu opens', () => {
