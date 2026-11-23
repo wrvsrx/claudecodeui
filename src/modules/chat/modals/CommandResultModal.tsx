@@ -419,16 +419,35 @@ function ModelsContent({
 }
 
 function CostContent({ data }: { data: CostCommandData }) {
-  const used = Number(data.tokenUsage?.used ?? 0);
+  const isClaude = data.provider === 'claude';
+  const used = data.tokenUsage?.used ?? (isClaude ? undefined : 0);
   const total = Number(data.tokenUsage?.total ?? 0);
   const model = data.model || 'Unknown';
   const provider = getProviderLabel(data.provider, data.provider || 'Unknown');
-  const hasBreakdown =
-    typeof data.tokenBreakdown?.input === 'number' ||
-    typeof data.tokenBreakdown?.output === 'number';
+  const breakdown = data.tokenBreakdown;
+  const formatCount = (count: number | undefined) => typeof count === 'number' && Number.isFinite(count)
+    ? formatNumber(count)
+    : 'Unavailable';
+  const hasBreakdown = typeof breakdown?.input === 'number' || typeof breakdown?.output === 'number';
+  const hitRate = breakdown?.cacheHitRate;
   const usageRows = [
-    { label: 'Total tokens used', value: formatNumber(used), icon: Activity },
-    ...(hasBreakdown
+    { label: 'Total tokens used', value: formatCount(used), icon: Activity },
+    ...(isClaude
+      ? [
+          { label: 'Total input tokens', value: formatCount(breakdown?.input), icon: TerminalSquare },
+          { label: 'Uncached input tokens', value: formatCount(breakdown?.uncachedInput), icon: TerminalSquare },
+          { label: 'Cache read tokens', value: formatCount(breakdown?.cacheRead), icon: TerminalSquare },
+          { label: 'Cache write tokens', value: formatCount(breakdown?.cacheWrite), icon: TerminalSquare },
+          { label: 'Output tokens', value: formatCount(breakdown?.output), icon: Coins },
+          {
+            label: 'Cache hit rate',
+            value: typeof hitRate === 'number' && Number.isFinite(hitRate)
+              ? hitRate.toLocaleString(undefined, { style: 'percent', maximumFractionDigits: 2 })
+              : 'Unavailable',
+            icon: Gauge,
+          },
+        ]
+      : hasBreakdown
       ? [
           {
             label: 'Input tokens',
@@ -453,7 +472,7 @@ function CostContent({ data }: { data: CostCommandData }) {
     // providers that report none) it is the CONTEXT_WINDOW setting, which cannot
     // know whether a session runs a 200K or a 1M variant of the same model —
     // and a row reading "used 404,009 / window 160,000" is worse than no row.
-    ...(total > used
+    ...(used !== undefined && total > used
       ? [{ label: 'Context window', value: formatNumber(total), icon: Gauge }]
       : []),
   ];
@@ -570,7 +589,9 @@ function CommandResultModal({
     cost: {
       eyebrow: t('chat:misc.modalMeta.costEyebrow'),
       title: t('chat:misc.modalMeta.costTitle'),
-      subtitle: t('chat:misc.modalMeta.costSubtitle'),
+      subtitle: payload?.kind === 'cost' && (payload.data as CostCommandData).provider === 'claude'
+        ? t('chat:misc.modalMeta.claudeCostSubtitle')
+        : t('chat:misc.modalMeta.costSubtitle'),
       icon: Coins,
     },
     status: {
@@ -627,7 +648,7 @@ function CommandResultModal({
           </Button>
         </div>
 
-        <div className="settings-content-enter min-h-0 flex-1 overflow-hidden px-4 py-4 sm:px-6 sm:py-5">
+        <div className={`settings-content-enter min-h-0 flex-1 px-4 py-4 sm:px-6 sm:py-5 ${kind === 'cost' ? 'overflow-y-auto' : 'overflow-hidden'}`}>
           {payload?.kind === 'help' && <HelpContent data={payload.data as HelpCommandData} />}
           {payload?.kind === 'models' && (
             <ModelsContent

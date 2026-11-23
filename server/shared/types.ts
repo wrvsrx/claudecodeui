@@ -69,6 +69,37 @@ export type AuthenticatedWebSocketRequest = IncomingMessage & {
 export type LLMProvider = 'claude' | 'codex' | 'cursor' | 'opencode';
 
 /**
+ * Exact counters for the latest main-thread Claude response, used by the live
+ * runtime, transcript reader and `/cost`. Missing counters are unknown, not
+ * zero. `input` includes uncached, cache read, and cache write; only set it
+ * when all three components are known. Never populate this from a turn bill.
+ */
+export type ClaudeResponseTokenUsage = {
+  input?: number;
+  uncachedInput?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  output?: number;
+};
+
+/**
+ * Claude's existing composer context-meter shape, shared by live and history
+ * readers. Its numeric meter fields are estimates when counters are missing;
+ * only `latestResponse` carries exact per-response counters for `/cost`.
+ */
+export type ClaudeTokenBudget = {
+  used: number;
+  total: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+  cacheTokens?: number;
+  breakdown: { input: number; output: number };
+  latestResponse?: ClaudeResponseTokenUsage;
+};
+
+/**
  * One selectable model row in a provider model catalog.
  */
 export type ProviderModelOption = {

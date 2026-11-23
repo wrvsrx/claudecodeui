@@ -6,6 +6,8 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import { sessionsDb } from '@/modules/database/index.js';
+import { buildClaudeTokenBudget, readClaudeResponseTokenUsage } from '@/shared/index.js';
+import type { ClaudeTokenBudget } from '@/shared/index.js';
 import type { AnyRecord } from '@/shared/types.js';
 import { AppError, getOpenCodeDatabasePath } from '@/shared/utils.js';
 
@@ -40,6 +42,7 @@ type TokenUsageResult = {
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
   cacheTokens?: number;
+  latestResponse?: ClaudeTokenBudget['latestResponse'];
   breakdown: {
     input: number;
     output: number;
@@ -252,51 +255,13 @@ export function summarizeClaudeTokenUsage(
   entries: AnyRecord[],
   configuredContextWindow: string | undefined = process.env.CONTEXT_WINDOW,
   reportedContextWindow?: number,
-): TokenUsageResult {
-  let inputTokens = 0;
-  let outputTokens = 0;
-  let cacheReadTokens = 0;
-  let cacheCreationTokens = 0;
-
+): ClaudeTokenBudget {
+  let response;
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index];
-    // A subagent's turns report the subagent's context window, not this
-    // conversation's; reading one makes the counter drop to the subagent's
-    // number and bounce back on the next main-thread turn.
-    if (entry?.isSidechain === true) {
-      continue;
+    response = readClaudeResponseTokenUsage(entries[index]);
+    if (response !== undefined) {
+      break;
     }
-
-    const usage = entry?.type === 'assistant' ? entry.message?.usage : null;
-    if (!usage) {
-      continue;
-    }
-
-    const directInputTokens = readUsageNumber(usage.input_tokens ?? usage.inputTokens);
-    const rowCacheReadTokens = readUsageNumber(
-      usage.cache_read_input_tokens ?? usage.cacheReadInputTokens ?? usage.cacheReadTokens,
-    );
-    const rowCacheCreationTokens = readUsageNumber(
-      usage.cache_creation_input_tokens
-        ?? usage.cacheCreationInputTokens
-        ?? usage.cacheCreationTokens,
-    );
-    const rowInputTokens = directInputTokens + rowCacheReadTokens + rowCacheCreationTokens;
-    const rowOutputTokens = readUsageNumber(usage.output_tokens ?? usage.outputTokens);
-
-    // `<synthetic>` rows — interrupts, API errors, "No response requested" —
-    // are written with an all-zero usage block rather than none at all. They
-    // never carried a prompt, so treating one as the newest turn zeroed a
-    // counter that a live event had just set correctly.
-    if (rowInputTokens === 0 && rowOutputTokens === 0) {
-      continue;
-    }
-
-    cacheReadTokens = rowCacheReadTokens;
-    cacheCreationTokens = rowCacheCreationTokens;
-    inputTokens = rowInputTokens;
-    outputTokens = rowOutputTokens;
-    break;
   }
 
   const parsedContextWindow = Number.parseInt(configuredContextWindow ?? '', 10);
@@ -304,18 +269,7 @@ export function summarizeClaudeTokenUsage(
   const contextWindow = reportedContextWindow && reportedContextWindow > 0
     ? reportedContextWindow
     : configuredOrDefaultContextWindow;
-  const cacheTokens = cacheReadTokens + cacheCreationTokens;
-
-  return {
-    used: inputTokens + outputTokens,
-    total: contextWindow,
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheCreationTokens,
-    cacheTokens,
-    breakdown: { input: inputTokens, output: outputTokens },
-  };
+  return buildClaudeTokenBudget(contextWindow, response, response);
 }
 
 function parseClaudeUsageEntries(fileContent: string): AnyRecord[] {
@@ -331,7 +285,7 @@ function parseClaudeUsageEntries(fileContent: string): AnyRecord[] {
 }
 
 function claudeEntriesHaveUsage(entries: AnyRecord[]): boolean {
-  return entries.some((entry) => entry?.type === 'assistant' && entry.message?.usage);
+  return entries.some((entry) => readClaudeResponseTokenUsage(entry) !== undefined);
 }
 
 function readOpenCodeTokenUsage(databasePath: string, providerSessionId: string): TokenUsageResult {

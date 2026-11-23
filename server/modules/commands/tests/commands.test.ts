@@ -112,3 +112,61 @@ test('cost and status commands report the same resolved model as /models', async
   assert.equal((cost.data as { model: string }).model, 'haiku');
   assert.equal((status.data as { model: string }).model, 'haiku');
 });
+
+
+test('/cost reports one Claude response without adding cached input twice', async () => {
+  const cost = await executeCommand('/cost', { provider: 'claude', tokenUsage: {
+    used: 9000, total: 160_000, inputTokens: 8000,
+    latestResponse: { input: 200, uncachedInput: 25, cacheRead: 150, cacheWrite: 25, output: 20 },
+  } });
+  assert.deepEqual(cost.data, {
+    tokenUsage: { used: 220, total: 160_000 },
+    tokenBreakdown: { input: 200, uncachedInput: 25, cacheRead: 150, cacheWrite: 25, output: 20, cacheHitRate: 0.75 },
+    provider: 'claude',
+    model: 'default',
+  });
+});
+
+test('/cost preserves zero and omits absent counters and a hit rate without a denominator', async () => {
+  const cost = await executeCommand('/cost', { provider: 'claude', tokenUsage: {
+    used: 90, total: 160_000,
+    latestResponse: { uncachedInput: 20, cacheRead: 0, output: 0 },
+  } });
+  const data = cost.data as Record<string, unknown>;
+  assert.deepEqual(data.tokenUsage, { total: 160_000 });
+  assert.deepEqual(data.tokenBreakdown, { uncachedInput: 20, cacheRead: 0, output: 0 });
+});
+
+test('/cost derives uncached input and allows a measured zero hit rate', async () => {
+  const cost = await executeCommand('/cost', { provider: 'claude', tokenUsage: {
+    latestResponse: { input: 30, cacheRead: 0, cacheWrite: 10, output: 0 },
+  } });
+  assert.deepEqual((cost.data as Record<string, unknown>).tokenBreakdown, {
+    input: 30, uncachedInput: 20, cacheRead: 0, cacheWrite: 10, output: 0, cacheHitRate: 0,
+  });
+});
+
+test('/cost neither derives uncached input from a partial breakdown nor divides by zero', async () => {
+  const cost = await executeCommand('/cost', { provider: 'claude', tokenUsage: {
+    latestResponse: { input: 0, cacheRead: 0 },
+  } });
+  assert.deepEqual((cost.data as Record<string, unknown>).tokenBreakdown, { input: 0, cacheRead: 0 });
+});
+
+test('/cost does not treat a cumulative fallback as a response', async () => {
+  const cost = await executeCommand('/cost', { provider: 'claude', tokenUsage: {
+    used: 800, total: 160_000, inputTokens: 700, outputTokens: 100, cacheReadTokens: 600,
+  } });
+  const data = cost.data as Record<string, unknown>;
+  assert.deepEqual(data.tokenUsage, { total: 160_000 });
+  assert.deepEqual(data.tokenBreakdown, {});
+});
+
+test('/cost retains the non-Claude provider breakdown and total', async () => {
+  const cost = await executeCommand('/cost', { provider: 'opencode', tokenUsage: {
+    inputTokens: 100, outputTokens: 20, cacheReadTokens: 60, cacheCreationTokens: 10, used: 130,
+  } });
+  const data = cost.data as Record<string, unknown>;
+  assert.deepEqual(data.tokenUsage, { used: 130, total: 0 });
+  assert.deepEqual(data.tokenBreakdown, { input: 100, output: 20 });
+});

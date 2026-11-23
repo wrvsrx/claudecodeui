@@ -771,7 +771,7 @@ export type ModelCommandData = {
   defaultModel?: string;
 };
 
-/** Result payload of the chat `/cost` slash command, carrying the session's token usage totals and input/output breakdown for the command modal's usage view. */
+/** Token figures for the `/cost` modal. Claude reports the latest response (not a turn bill); omitted counters are unavailable, and cacheHitRate is cache read divided by total input. */
 export type CostCommandData = {
   tokenUsage?: {
     used?: number;
@@ -779,7 +779,11 @@ export type CostCommandData = {
   };
   tokenBreakdown?: {
     input?: number;
+    uncachedInput?: number;
+    cacheRead?: number;
+    cacheWrite?: number;
     output?: number;
+    cacheHitRate?: number;
   };
   provider?: string;
   model?: string;

@@ -66,6 +66,7 @@ test('token usage lookup requires only the app-facing session id for Claude', as
       cacheCreationTokens: 5,
       cacheTokens: 25,
       breakdown: { input: 125, output: 30 },
+      latestResponse: { input: 125, uncachedInput: 100, cacheRead: 20, cacheWrite: 5, output: 30 },
     });
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
@@ -209,7 +210,17 @@ test('the Claude summarizer reads the newest assistant turn, not the whole conve
     cacheCreationTokens: 100,
     cacheTokens: 4100,
     breakdown: { input: 4103, output: 80 },
+    latestResponse: { input: 4103, uncachedInput: 3, cacheRead: 4000, cacheWrite: 100, output: 80 },
   });
+});
+
+test('the newest transcript response keeps zero but does not borrow omitted counters', () => {
+  const older = { type: 'assistant', message: { usage: {
+    input_tokens: 40, cache_read_input_tokens: 90, cache_creation_input_tokens: 10, output_tokens: 3,
+  } } };
+  const latest = { type: 'assistant', message: { usage: { input_tokens: 0, cache_read_input_tokens: 0 } } };
+  assert.deepEqual(summarizeClaudeTokenUsage([older, latest]).latestResponse, { uncachedInput: 0, cacheRead: 0 });
+  assert.deepEqual(summarizeClaudeTokenUsage([older, { type: 'assistant', message: {} }]).latestResponse, {});
 });
 
 test('the Claude summarizer skips synthetic rows that carry an all-zero usage block', () => {

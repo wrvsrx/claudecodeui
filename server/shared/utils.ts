@@ -24,6 +24,8 @@ import type {
   AnyRecord,
   ApiSuccessShape,
   AppErrorOptions,
+  ClaudeResponseTokenUsage,
+  ClaudeTokenBudget,
   CliVersionProbe,
   NormalizedMessage,
   ProviderCurrentActiveModel,
@@ -1391,6 +1393,97 @@ export async function extractFirstValidJsonlData<T>(
  */
 export function isClaudeNonTurnMessageRow(row: AnyRecord): boolean {
   return row.message != null && row.type !== 'user' && row.type !== 'assistant';
+}
+
+// ---------------------------
+//----------------- CLAUDE TOKEN USAGE UTILITIES ------------
+/**
+ * Reads one finite, nonnegative token count for the provider readers and
+ * `/cost`. Accepts numbers and nonblank numeric strings; a missing or invalid
+ * value stays undefined so a legitimate zero is distinguishable from it.
+ */
+export function readOptionalTokenCount(value: unknown): number | undefined {
+  if (typeof value !== 'number' && (typeof value !== 'string' || !value.trim())) {
+    return undefined;
+  }
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? count : undefined;
+}
+
+/**
+ * Used by the Claude runtime and history reader to decode assistant usage in
+ * the same way. `input_tokens` is the uncached portion of the request. When
+ * any prompt component is missing, retain the other counters without claiming
+ * that their subtotal is the entire input. Call only for assistant messages,
+ * not for SDK results or model-level totals.
+ */
+export function readClaudeResponseTokenUsage(row: AnyRecord): ClaudeResponseTokenUsage | undefined {
+  if (
+    row?.type !== 'assistant' || row.isSidechain === true || row.parent_tool_use_id
+    || row.isApiErrorMessage || row.message?.model === '<synthetic>' || !row.message
+  ) {
+    return undefined;
+  }
+
+  // An assistant response without usage must not inherit an older breakdown.
+  return decodeClaudeTokenCounters(row.message.usage);
+}
+
+/**
+ * Parses the counters in an Anthropic usage block. Used by the assistant
+ * reader above and the runtime's cumulative composer-meter fallback; the
+ * result is only a response snapshot if its source was an assistant response.
+ */
+export function decodeClaudeTokenCounters(rawUsage: unknown): ClaudeResponseTokenUsage {
+  const usage = readJsonRecord(rawUsage) ?? {};
+  const uncachedInput = readOptionalTokenCount(usage.input_tokens ?? usage.inputTokens);
+  const cacheRead = readOptionalTokenCount(
+    usage.cache_read_input_tokens ?? usage.cacheReadInputTokens ?? usage.cacheReadTokens,
+  );
+  const cacheWrite = readOptionalTokenCount(
+    usage.cache_creation_input_tokens ?? usage.cacheCreationInputTokens ?? usage.cacheCreationTokens,
+  );
+  const output = readOptionalTokenCount(usage.output_tokens ?? usage.outputTokens);
+  const input = uncachedInput !== undefined && cacheRead !== undefined && cacheWrite !== undefined
+    ? uncachedInput + cacheRead + cacheWrite
+    : undefined;
+
+  return {
+    ...(input !== undefined ? { input } : {}),
+    ...(uncachedInput !== undefined ? { uncachedInput } : {}),
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+    ...(output !== undefined ? { output } : {}),
+  };
+}
+
+// ---------------------------
+/**
+ * Builds the numeric composer meter used by the Claude live runtime and
+ * history reader, retaining exact response counters separately for `/cost`.
+ * A cumulative fallback may retain its meter but must not pass it as a response.
+ */
+export function buildClaudeTokenBudget(
+  total: number,
+  counters: ClaudeResponseTokenUsage = {},
+  latestResponse?: ClaudeResponseTokenUsage,
+): ClaudeTokenBudget {
+  const { uncachedInput, cacheRead, cacheWrite, output } = counters;
+  const cacheTokens = (cacheRead ?? 0) + (cacheWrite ?? 0);
+  const inputTokens = (uncachedInput ?? 0) + cacheTokens;
+  const outputTokens = output ?? 0;
+
+  return {
+    used: inputTokens + outputTokens,
+    total,
+    inputTokens,
+    outputTokens,
+    ...(cacheRead !== undefined ? { cacheReadTokens: cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheCreationTokens: cacheWrite } : {}),
+    ...(cacheRead !== undefined && cacheWrite !== undefined ? { cacheTokens } : {}),
+    breakdown: { input: inputTokens, output: outputTokens },
+    ...(latestResponse !== undefined ? { latestResponse } : {}),
+  };
 }
 
 // ---------------------------

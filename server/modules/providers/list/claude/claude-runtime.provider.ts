@@ -44,6 +44,8 @@ import {
   getReportedClaudeContextWindow,
   rememberClaudeContextWindow
 } from '@/modules/providers/services/provider-token-usage.service.js';
+import { buildClaudeTokenBudget, decodeClaudeTokenCounters, readClaudeResponseTokenUsage } from '@/shared/index.js';
+import type { ClaudeTokenBudget } from '@/shared/index.js';
 import { createCompleteMessage, createNormalizedMessage, errorMessage } from '@/shared/utils.js';
 import type {
   AnyRecord,
@@ -107,20 +109,6 @@ type ToolApprovalDecision = AnyRecord | null;
 
 /** A pending approval's resolver, carrying the lookup fields getPendingApprovalsForSession reads. */
 type ToolApprovalResolver = ((decision: ToolApprovalDecision) => void) & AnyRecord;
-
-/**
- * A context-window reading. `used` is what the window holds; `total` is its size.
- */
-type TokenBudget = {
-  used: number;
-  total: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens?: number;
-  cacheCreationTokens?: number;
-  cacheTokens?: number;
-  breakdown: { input: number; output: number };
-};
 
 const activeSessions = new Map<string, ActiveSession>();
 // Outstanding background tasks per live session, keyed like activeSessions. An
@@ -687,76 +675,15 @@ function readReportedContextWindow(sdkMessage: AnyRecord, mainModel: string | nu
   return entry ? readNumber(entry[1].contextWindow) : null;
 }
 
-/**
- * Builds a context-window budget from an Anthropic-shaped usage payload.
- *
- * `input_tokens + cache_read + cache_creation` is one request's whole prompt,
- * which is exactly what the context window holds at that moment.
- * @param {Object} messageUsage - Anthropic usage payload
- * @param {number|null} [reportedContextWindow] - SDK-reported window for the session's model
- * @returns {TokenBudget} Token budget object
- */
-function buildTokenBudget(messageUsage: AnyRecord, reportedContextWindow?: number | null): TokenBudget {
-  const directInputTokens = readNumber(messageUsage.input_tokens ?? messageUsage.inputTokens);
-  const cacheCreationTokens = readNumber(messageUsage.cache_creation_input_tokens ?? messageUsage.cacheCreationInputTokens ?? messageUsage.cacheCreationTokens);
-  const cacheReadTokens = readNumber(messageUsage.cache_read_input_tokens ?? messageUsage.cacheReadInputTokens ?? messageUsage.cacheReadTokens);
-  const cacheTokens = cacheCreationTokens + cacheReadTokens;
-  const inputTokens = directInputTokens + cacheTokens;
-  const outputTokens = readNumber(messageUsage.output_tokens ?? messageUsage.outputTokens);
-  const contextWindow = resolveContextWindow(reportedContextWindow);
-
-  return {
-    used: inputTokens + outputTokens,
-    total: contextWindow,
-    inputTokens,
-    outputTokens,
-    cacheReadTokens,
-    cacheCreationTokens,
-    cacheTokens,
-    breakdown: {
-      input: inputTokens,
-      output: outputTokens,
-    },
-  };
-}
-
-/**
- * Extracts the session's context-window usage from an SDK stream message.
- *
- * Only assistant messages describe the context window: each one reports the
- * prompt its own request carried. The turn-ending `result` is deliberately not
- * a source here — see `extractCumulativeTokenBudget`.
- * @param {Object} sdkMessage - SDK stream message
- * @param {number|null} [reportedContextWindow] - SDK-reported window for the session's model
- * @returns {TokenBudget|null} Token budget object or null
- */
-function extractTokenBudget(sdkMessage: unknown, reportedContextWindow?: number | null): TokenBudget | null {
+/** Reads just the latest main-thread response. SDK results are turn-wide bills. */
+function extractTokenBudget(sdkMessage: unknown, reportedContextWindow?: number | null): ClaudeTokenBudget | null {
   if (!sdkMessage || typeof sdkMessage !== 'object') {
     return null;
   }
-
-  // Subagent traffic (parent_tool_use_id set) reports the subagent's own
-  // context window, not this session's — surfacing it makes the counter drop
-  // to the subagent's number and bounce back on the next main-thread event.
-  const message = sdkMessage as AnyRecord;
-  if (message.parent_tool_use_id) {
-    return null;
-  }
-
-  // Only assistant messages carry Anthropic-shaped usage. System
-  // task_progress/task_notification events have a top-level `usage` too, but
-  // shaped {total_tokens, tool_uses, duration_ms} — reading Anthropic keys
-  // off it yields an all-zero budget that flashes "0" in the composer.
-  if (message.type !== 'assistant') {
-    return null;
-  }
-
-  const messageUsage = message.message?.usage;
-  if (!messageUsage || typeof messageUsage !== 'object') {
-    return null;
-  }
-
-  return buildTokenBudget(messageUsage, reportedContextWindow);
+  const response = readClaudeResponseTokenUsage(sdkMessage as AnyRecord);
+  return response === undefined
+    ? null
+    : buildClaudeTokenBudget(resolveContextWindow(reportedContextWindow), response, response);
 }
 
 /**
@@ -774,16 +701,16 @@ function extractTokenBudget(sdkMessage: unknown, reportedContextWindow?: number 
  * produced no assistant budget at all.
  * @param {Object} sdkMessage - SDK stream message
  * @param {number|null} [reportedContextWindow] - SDK-reported window for the session's model
- * @returns {TokenBudget|null} Token budget object or null
+ * @returns {ClaudeTokenBudget|null} Token budget object or null
  */
-function extractCumulativeTokenBudget(rawMessage: unknown, reportedContextWindow?: number | null): TokenBudget | null {
+function extractCumulativeTokenBudget(rawMessage: unknown, reportedContextWindow?: number | null): ClaudeTokenBudget | null {
   const sdkMessage = rawMessage as AnyRecord | null;
   if (!sdkMessage || typeof sdkMessage !== 'object' || sdkMessage.type !== 'result') {
     return null;
   }
 
   if (sdkMessage.usage && typeof sdkMessage.usage === 'object') {
-    return buildTokenBudget(sdkMessage.usage, reportedContextWindow);
+    return buildClaudeTokenBudget(resolveContextWindow(reportedContextWindow), decodeClaudeTokenCounters(sdkMessage.usage));
   }
 
   if (!sdkMessage.modelUsage || typeof sdkMessage.modelUsage !== 'object') {
@@ -1215,7 +1142,7 @@ async function queryClaudeSDK(
   // right total when the turn's `result` is the first to state the window.
   let reportedContextWindow: number | null = getReportedClaudeContextWindow(providerSessionId) ?? null;
   let mainThreadModel: string | null = null;
-  let lastSentTokenBudget: TokenBudget | null = null;
+  let lastSentTokenBudget: ClaudeTokenBudget | null = null;
 
   // A new turn supersedes any earlier one still holding this session's process
   // open, so held runs cannot stack up across a conversation.
@@ -1731,7 +1658,7 @@ async function queryClaudeSDK(
         && lastSentTokenBudget.total !== turnContextWindow
       ) {
         // The reading stands; only the window it is measured against was wrong.
-        tokenBudgetData = { ...(lastSentTokenBudget as TokenBudget), total: turnContextWindow };
+        tokenBudgetData = { ...(lastSentTokenBudget as ClaudeTokenBudget), total: turnContextWindow };
       }
       if (tokenBudgetData) {
         if (message.type === 'assistant') {

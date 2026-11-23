@@ -451,6 +451,7 @@
       "costEyebrow": "Session telemetry",
       "costTitle": "Token Usage",
       "costSubtitle": "Input, output, and total token counts for this session.",
+      "claudeCostSubtitle": "Token counts for the latest response. Cache hit rate is cache read divided by total input.",
       "statusEyebrow": "Runtime health",
       "statusTitle": "System Status",
       "statusSubtitle": "Version, provider, runtime, and environment details in one place.",

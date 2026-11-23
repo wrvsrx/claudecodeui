@@ -6,7 +6,7 @@ import {
   extractTokenBudget,
 } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 
-test('assistant usage produces a cumulative budget', () => {
+test('assistant usage produces a per-response budget without counting cache twice', () => {
   const budget = extractTokenBudget({
     type: 'assistant',
     message: {
@@ -23,6 +23,20 @@ test('assistant usage produces a cumulative budget', () => {
   assert.equal(budget.inputTokens, 42_012);
   assert.equal(budget.outputTokens, 500);
   assert.equal(budget.used, 42_512);
+  assert.deepEqual(budget.latestResponse, {
+    input: 42_012, uncachedInput: 12, cacheRead: 40_000, cacheWrite: 2_000, output: 500,
+  });
+});
+
+test('latest live usage preserves explicit zero but does not fill omitted counters', () => {
+  const budget = extractTokenBudget({
+    type: 'assistant',
+    message: { usage: { input_tokens: 0, cache_read_input_tokens: 250 } },
+  });
+
+  assert.ok(budget);
+  assert.deepEqual(budget.latestResponse, { uncachedInput: 0, cacheRead: 250 });
+  assert.equal(budget.cacheCreationTokens, undefined);
 });
 
 test('system task events with tool-usage shaped usage emit no budget', () => {
@@ -81,6 +95,7 @@ test('the cumulative reader stays available for SDK builds with no assistant usa
 
   assert.ok(fromUsage);
   assert.equal(fromUsage.used, 40_644);
+  assert.equal(fromUsage.latestResponse, undefined);
 
   const fromModelUsage = extractCumulativeTokenBudget({
     type: 'result',

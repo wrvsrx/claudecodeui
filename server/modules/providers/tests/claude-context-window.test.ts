@@ -8,7 +8,7 @@ import { ClaudeSessionsProvider } from '@/modules/providers/list/claude/claude-s
 import { CLAUDE_PREDEFINED_MODELS } from '@/modules/providers/list/claude/claude-models.provider.js';
 import { queryClaudeSDK } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import { createProviderTokenUsageService } from '@/modules/providers/services/provider-token-usage.service.js';
-import type { NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
+import type { ClaudeTokenBudget, NormalizedMessage, ProviderRuntimeContext } from '@/shared/types.js';
 
 /**
  * The context-window total comes from the window the SDK reports for the model
@@ -55,7 +55,7 @@ async function runScripted(
 const tokenBudgets = (sent: NormalizedMessage[]) =>
   sent
     .filter((message) => message.kind === 'status' && message.text === 'token_budget')
-    .map((message) => message.tokenBudget as { used: number; total: number });
+    .map((message) => message.tokenBudget as ClaudeTokenBudget);
 
 const usage = { input_tokens: 12, cache_read_input_tokens: 40_000, cache_creation_input_tokens: 2_000, output_tokens: 500 };
 
@@ -127,6 +127,24 @@ test('the live budget reports the window the SDK measured for a [1m] model', asy
     // The reading itself is still the last request's prompt, not the turn's bill.
     assert.equal(last.used, 42_512);
   });
+});
+
+test('the live event retains the latest main-thread response, not the SDK result bill', async () => {
+  const nativeId = 'native-latest-cost';
+  const sent = await runScripted('app-latest-cost', [
+    { type: 'system', subtype: 'init', session_id: nativeId },
+    assistant(nativeId, 'claude-local'),
+    assistant(nativeId, 'claude-local', { message: {
+      role: 'assistant', model: 'claude-local', content: [{ type: 'text', text: 'latest' }],
+      usage: { input_tokens: 3, cache_read_input_tokens: 0, output_tokens: 5 },
+    } }),
+    assistant(nativeId, 'claude-local', { parent_tool_use_id: 'toolu_agent' }),
+    result(nativeId, { 'claude-local': modelUsageEntry(200_000) }),
+  ]);
+
+  const last = tokenBudgets(sent).at(-1);
+  assert.equal(last?.total, 200_000);
+  assert.deepEqual(last?.latestResponse, { uncachedInput: 3, cacheRead: 0, output: 5 });
 });
 
 test('a reported window wins over an explicit CONTEXT_WINDOW', async () => {
