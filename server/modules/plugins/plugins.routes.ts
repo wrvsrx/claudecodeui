@@ -14,7 +14,10 @@ function routeParameter(value: string | string[]): string {
 }
 
 /** Creates plugin routes; transport streaming remains here while decisions live in the service. */
-export function createPluginsRouter(service: ReturnType<typeof createPluginsService>): express.Router {
+export function createPluginsRouter(
+  service: ReturnType<typeof createPluginsService>,
+  { forwardQueryToken = true } = {},
+): express.Router {
   const router = express.Router();
   const respond = (operation: (req: express.Request) => unknown | Promise<unknown>) =>
     async (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -45,7 +48,15 @@ export function createPluginsRouter(service: ReturnType<typeof createPluginsServ
       for (const [key, value] of Object.entries(secrets)) {
         headers[`x-plugin-secret-${key.toLowerCase()}`] = String(value);
       }
-      const query = req.url.includes('?') ? `?${req.url.split('?').slice(1).join('?')}` : '';
+      let query = req.url.includes('?') ? `?${req.url.split('?').slice(1).join('?')}` : '';
+      if (!forwardQueryToken) {
+        // Do not forward a CloudCLI query JWT to an independently run plugin.
+        const parameters = new URLSearchParams(query);
+        if (parameters.has('token')) {
+          parameters.delete('token');
+          query = parameters.size ? `?${parameters}` : '';
+        }
+      }
       const proxyRequest = http.request({
         hostname: '127.0.0.1', port, path: `/${wildcardPath(req)}${query}`, method: req.method, headers,
       }, (proxyResponse) => {

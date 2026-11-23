@@ -29,5 +29,10 @@ const pluginsService = createPluginsService({
   logError: (message, error) => console.error(message, error),
 });
 
-/** Plugin router assembled with filesystem, loader, and process adapters. */
-export const pluginsRoutes = createPluginsRouter(pluginsService);
+/** Assembles plugin routes for the server entrypoint, optionally redacting query credentials. */
+export function createPluginsModule(options: { forwardQueryToken: boolean }) {
+  return createPluginsRouter(pluginsService, options);
+}
+
+/** Standalone plugin router, also used by plugin integration tests. */
+export const pluginsRoutes = createPluginsModule({ forwardQueryToken: true });

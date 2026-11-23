@@ -1,5 +1,5 @@
 // pluginsRoutes: used by the server entrypoint to mount protected plugin-management endpoints.
-export { pluginsRoutes } from './plugins.module.js';
+export { createPluginsModule, pluginsRoutes } from './plugins.module.js';
 
 // startEnabledPluginServers: used by the server entrypoint to start enabled plugin subprocesses.
 export { startEnabledPluginServers } from './plugin-process.service.js';

@@ -126,6 +126,24 @@ export function createAuthService(dependencies: AuthDependencies) {
       };
     },
 
+    /** Called by the auth module only after the router verifies fresh proxy proof. */
+    issueProxySession(resolveUser: () => AuthUser | undefined) {
+      const user = resolveUser();
+      if (!user) {
+        throw new AppError('CloudCLI SSO requires exactly one active local account', {
+          code: 'AUTH_SSO_ACCOUNT_UNAVAILABLE',
+          statusCode: 409,
+        });
+      }
+      const id = numericUserId(user.id);
+      dependencies.users.updateLastLogin(id);
+      return {
+        success: true,
+        user: { id, username: user.username },
+        token: dependencies.generateToken({ id, username: user.username }),
+      };
+    },
+
     getCurrentUser(user: unknown) {
       return { user };
     },

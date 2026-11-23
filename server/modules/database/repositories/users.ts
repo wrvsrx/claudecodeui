@@ -99,6 +99,22 @@ export const userDb = {
       .get() as UserPublicRow | undefined;
   },
 
+  /** Used by the Auth module to bind SSO to the sole local account or enroll on an empty DB. */
+  resolveProxyUser(placeholderHash: string | null): CreateUserResult | undefined {
+    const db = getConnection();
+    // IMMEDIATE serializes both the cardinality check and enrollment, even if
+    // several first exchanges hashed a password concurrently.
+    return db.transaction(() => {
+      const rows = db.prepare('SELECT id, username, is_active FROM users LIMIT 2').all() as
+        Pick<UserRow, 'id' | 'username' | 'is_active'>[];
+      if (rows.length === 0 && placeholderHash !== null) {
+        return userDb.createUser('kanidm-sso', placeholderHash);
+      }
+      const user = rows[0];
+      return rows.length === 1 && user?.is_active === 1 ? { id: user.id, username: user.username } : undefined;
+    }).immediate();
+  },
+
   /** Stores the user's preferred git name and email. */
   updateGitConfig(
     userId: number,

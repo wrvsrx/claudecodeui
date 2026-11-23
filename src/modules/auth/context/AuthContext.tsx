@@ -3,8 +3,8 @@ import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 
 import { IS_PLATFORM } from '@/shared/utils';
-import { api, readApiErrorMessage } from '@/shared/api';
-import { AUTH_SESSION_EXPIRED_EVENT, AUTH_TOKEN_REFRESHED_EVENT, getAuthTokenRefreshDelay, isValidRefreshedToken, storeAuthToken } from '@/shared/authToken';
+import { api, readApiErrorMessage, setSsoProxySessionEnabled } from '@/shared/api';
+import { AUTH_SESSION_EXPIRED_EVENT, AUTH_TOKEN_REFRESHED_EVENT, getAuthTokenRefreshDelay, isAuthTokenExpired, isValidRefreshedToken, storeAuthToken } from '@/shared/authToken';
 import { hydrateChatDrafts, resetChatDrafts } from '@/shared/chatDrafts';
 import { hydrateUserPreferences, resetUserPreferences } from '@/shared/userSettings';
 /** The signed-in account held by AuthContext - a required `username` plus an optional id and any additional fields the auth API returns - and should be read through `useAuth()` rather than re-derived from raw auth responses. */
@@ -22,18 +22,23 @@ const AUTH_ERROR_MESSAGES = {
   registrationFailed: 'errors.registrationFailed',
   networkError: 'errors.networkError',
   sessionExpired: 'errors.sessionExpired',
+  ssoFailed: 'sso.failed',
 } as const;
 
 type AuthActionResult = { success: true } | { success: false; error: string };
 
 type AuthSessionPayload = {
+  success?: boolean;
   token?: string;
   user?: AuthUser;
 };
 
 type AuthStatusPayload = {
   needsSetup?: boolean;
+  ssoBridge?: boolean;
 };
+
+type AuthMode = 'standalone' | 'sso' | null;
 
 type AuthUserPayload = {
   user?: AuthUser;
@@ -47,6 +52,7 @@ type AuthContextValue = {
   user: AuthUser | null;
   token: string | null;
   isLoading: boolean;
+  authMode: AuthMode;
   needsSetup: boolean;
   hasCompletedOnboarding: boolean;
   error: string | null;
@@ -95,6 +101,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [token, setToken] = useState<string | null>(() => readStoredToken());
   const [isLoading, setIsLoading] = useState(true);
+  // Native forms are allowed only after status confirms standalone authentication.
+  const [authMode, setAuthMode] = useState<AuthMode>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [hasCompletedOnboarding, setHasCompletedOnboarding] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,50 +149,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     await checkOnboardingStatus();
   }, [checkOnboardingStatus]);
 
-  const refreshSession = useCallback(async () => {
-    if (IS_PLATFORM || !token || !user) {
-      return;
-    }
-
-    try {
-      const response = await api.auth.refresh();
-      if (!response.ok) {
-        return;
-      }
-
-      const payload = await parseJsonSafely<AuthSessionPayload>(response);
-      if (isValidRefreshedToken(payload?.token)) {
-        setToken(payload.token);
-        persistToken(payload.token);
-      }
-    } catch (caughtError) {
-      // A transient network failure must not sign the user out. Focus/visibility
-      // and the next scheduled refresh will retry while the token remains valid.
-      console.warn('[Auth] Session refresh failed:', caughtError);
-    }
-  }, [token, user]);
-
-  useEffect(() => {
-    const handleTokenRefreshed = (event: Event) => {
-      const nextToken = (event as CustomEvent<unknown>).detail;
-      if (isValidRefreshedToken(nextToken)) {
-        setToken(nextToken);
-      }
-    };
-    const handleSessionExpired = () => {
-      clearSession();
-      setError(t(AUTH_ERROR_MESSAGES.sessionExpired));
-    };
-
-    window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, handleTokenRefreshed);
-    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
-    return () => {
-      window.removeEventListener(AUTH_TOKEN_REFRESHED_EVENT, handleTokenRefreshed);
-      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
-    };
-  }, [clearSession, t]);
-
-  // The startup check below needs `t` only for its failure message.
+  // The bootstrap below needs `t` only for its failure message.
   // react-i18next gives `t` a new identity on every language change, so
   // depending on it would re-run that check - and swap the whole app for the
   // loading screen - whenever the language changes, including when sign-in
@@ -194,7 +159,28 @@ export function AuthProvider({ children }: AuthProviderProps) {
     tRef.current = t;
   }, [t]);
 
-  const checkAuthStatus = useCallback(async () => {
+  // ProtectedRoute shows the workspace as soon as there is a user, so the
+  // onboarding status is settled before the user is published; otherwise a
+  // user who still has to onboard would see the workspace mount for a whole
+  // round trip before Onboarding replaced it. The token is stored first
+  // because that request reads it from storage.
+  const publishSession = useCallback(async (nextUser: AuthUser, nextToken: string, fromSso = false) => {
+    persistToken(nextToken);
+    await checkOnboardingStatus();
+    // A proxy rejection during onboarding may have already removed the JWT.
+    const sessionToken = fromSso ? readStoredToken() : nextToken;
+    if (!sessionToken) {
+      return false;
+    }
+    setUser(nextUser);
+    setToken(sessionToken);
+    setNeedsSetup(false);
+    return true;
+  }, [checkOnboardingStatus]);
+
+  useEffect(() => () => setSsoProxySessionEnabled(false), []);
+
+  const bootstrapSession = useCallback(async () => {
     try {
       setIsLoading(true);
       setError(null);
@@ -202,7 +188,44 @@ export function AuthProvider({ children }: AuthProviderProps) {
       const statusResponse = await api.auth.status();
       const statusPayload = await parseJsonSafely<AuthStatusPayload>(statusResponse);
 
-      if (statusPayload?.needsSetup) {
+      if (!statusResponse.ok || typeof statusPayload?.needsSetup !== 'boolean') {
+        // A proxy redirect (including an expired cookie) is not standalone mode.
+        if (statusResponse.type === 'opaqueredirect' || [401, 403].includes(statusResponse.status)) {
+          clearSession();
+        }
+        setError(tRef.current(AUTH_ERROR_MESSAGES.authStatusCheckFailed));
+        return;
+      }
+
+      if (statusPayload.ssoBridge === true) {
+        setSsoProxySessionEnabled(true);
+        setAuthMode('sso');
+        setNeedsSetup(false);
+        // The proxy is authoritative. Do not reuse or send any cached JWT here.
+        setToken(null);
+        clearStoredToken();
+        try {
+          const response = await api.auth.sso();
+          const payload = await parseJsonSafely<AuthSessionPayload>(response);
+          if (
+            response.ok && payload?.success === true &&
+            typeof payload.user?.username === 'string' && payload.user.username &&
+            isValidRefreshedToken(payload.token) && !isAuthTokenExpired(payload.token) &&
+            await publishSession(payload.user, payload.token, true)
+          ) {
+            return;
+          }
+        } catch {
+          // The user can reload to retry the proxy login without a redirect loop.
+        }
+        clearSession();
+        setError(tRef.current(AUTH_ERROR_MESSAGES.ssoFailed));
+        return;
+      }
+
+      setSsoProxySessionEnabled(false);
+      setAuthMode('standalone');
+      if (statusPayload.needsSetup) {
         setNeedsSetup(true);
         return;
       }
@@ -237,7 +260,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [checkOnboardingStatus, clearSession]);
+  }, [checkOnboardingStatus, clearSession, publishSession]);
+
+  // Share in-flight bootstrap requests across StrictMode and simultaneous expirations.
+  const pendingBootstrap = useRef<Promise<void> | null>(null);
+  const checkAuthStatus = useCallback(() => {
+    if (!pendingBootstrap.current) {
+      pendingBootstrap.current = bootstrapSession().finally(() => {
+        pendingBootstrap.current = null;
+      });
+    }
+    return pendingBootstrap.current;
+  }, [bootstrapSession]);
 
   useEffect(() => {
     if (IS_PLATFORM) {
@@ -251,6 +285,59 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     void checkAuthStatus();
   }, [checkAuthStatus, checkOnboardingStatus]);
+
+  const refreshSession = useCallback(async () => {
+    if (IS_PLATFORM || !token || !user) {
+      return;
+    }
+
+    try {
+      const response = await api.auth.refresh();
+      if (!response.ok) {
+        return;
+      }
+
+      const payload = await parseJsonSafely<AuthSessionPayload>(response);
+      if (isValidRefreshedToken(payload?.token) &&
+          (authMode !== 'sso' || readStoredToken() === token)) {
+        setToken(payload.token);
+        persistToken(payload.token);
+      }
+    } catch (caughtError) {
+      // A transient network failure must not sign the user out. Focus/visibility
+      // and the next scheduled refresh will retry while the token remains valid.
+      console.warn('[Auth] Session refresh failed:', caughtError);
+    }
+  }, [authMode, token, user]);
+
+  useEffect(() => {
+    const handleTokenRefreshed = (event: Event) => {
+      const nextToken = (event as CustomEvent<unknown>).detail;
+      if (isValidRefreshedToken(nextToken)) {
+        setToken(nextToken);
+      }
+    };
+    const handleSessionExpired = () => {
+      if (authMode === 'sso') {
+        // Only re-exchange once for the live session, not on every failed request.
+        if (user) {
+          setUser(null);
+          setToken(null);
+          void checkAuthStatus();
+        }
+        return;
+      }
+      clearSession();
+      setError(t(AUTH_ERROR_MESSAGES.sessionExpired));
+    };
+
+    window.addEventListener(AUTH_TOKEN_REFRESHED_EVENT, handleTokenRefreshed);
+    window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    return () => {
+      window.removeEventListener(AUTH_TOKEN_REFRESHED_EVENT, handleTokenRefreshed);
+      window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleSessionExpired);
+    };
+  }, [authMode, checkAuthStatus, clearSession, t, user]);
 
   useEffect(() => {
     if (IS_PLATFORM || !token || !user) {
@@ -285,19 +372,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, [refreshSession, token, user]);
-
-  // ProtectedRoute shows the workspace as soon as there is a user, so the
-  // onboarding status is settled before the user is published; otherwise a
-  // user who still has to onboard would see the workspace mount for a whole
-  // round trip before Onboarding replaced it. The token is stored first
-  // because that request reads it from storage.
-  const publishSession = useCallback(async (nextUser: AuthUser, nextToken: string) => {
-    persistToken(nextToken);
-    await checkOnboardingStatus();
-    setUser(nextUser);
-    setToken(nextToken);
-    setNeedsSetup(false);
-  }, [checkOnboardingStatus]);
 
   const login = useCallback<AuthContextValue['login']>(
     async (username, password) => {
@@ -353,13 +427,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
     // JWT logout is client-side: the server endpoint does not maintain a
     // revocation list, so clearing the session is the complete operation.
     clearSession();
-  }, [clearSession]);
+    if (authMode === 'sso') {
+      // Clearing only the app JWT would sign back in from the proxy cookie.
+      window.location.replace('/oauth2/sign_out');
+    }
+  }, [authMode, clearSession]);
 
   const contextValue = useMemo<AuthContextValue>(
     () => ({
       user,
       token,
       isLoading,
+      authMode,
       needsSetup,
       hasCompletedOnboarding,
       error,
@@ -369,6 +448,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       refreshOnboardingStatus,
     }),
     [
+      authMode,
       error,
       hasCompletedOnboarding,
       isLoading,

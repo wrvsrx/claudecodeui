@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import { getConnection, userDb } from '@/modules/database/index.js';
@@ -5,6 +6,7 @@ import { getConnection, userDb } from '@/modules/database/index.js';
 import { authenticateToken, generateToken } from './auth.middleware.js';
 import { createAuthRouter } from './auth.routes.js';
 import { createAuthService } from './auth.service.js';
+import type { createProxySsoBridge } from './proxy-sso.service.js';
 
 type BcryptAdapter = {
   hash(password: string, saltRounds: number): Promise<string>;
@@ -15,24 +17,29 @@ type BcryptAdapter = {
 // composition root narrows its CommonJS runtime surface before injecting it.
 const require = createRequire(import.meta.url);
 const bcrypt = require('bcrypt') as BcryptAdapter;
-const databaseConnection = getConnection();
-
-const authService = createAuthService({
-  users: {
-    hasUsers: () => userDb.hasUsers(),
-    createUser: (username, passwordHash) => userDb.createUser(username, passwordHash),
-    getUserByUsername: (username) => userDb.getUserByUsername(username),
-    updateLastLogin: (userId) => userDb.updateLastLogin(userId),
-  },
-  transaction: {
-    begin: () => databaseConnection.prepare('BEGIN').run(),
-    commit: () => databaseConnection.prepare('COMMIT').run(),
-    rollback: () => databaseConnection.prepare('ROLLBACK').run(),
-  },
-  hashPassword: (password) => bcrypt.hash(password, 12),
-  comparePassword: (password, passwordHash) => bcrypt.compare(password, passwordHash),
-  generateToken,
-});
-
-/** Auth router assembled for the server entrypoint. */
-export const authRoutes = createAuthRouter(authService, authenticateToken);
+/** Assembles the auth router for the server entrypoint in standalone or bridge mode. */
+export function createAuthModule(bridge: ReturnType<typeof createProxySsoBridge>) {
+  const databaseConnection = getConnection();
+  const service = createAuthService({
+    users: {
+      hasUsers: () => userDb.hasUsers(),
+      createUser: (username, passwordHash) => userDb.createUser(username, passwordHash),
+      getUserByUsername: (username) => userDb.getUserByUsername(username),
+      updateLastLogin: (userId) => userDb.updateLastLogin(userId),
+    },
+    transaction: {
+      begin: () => databaseConnection.prepare('BEGIN').run(),
+      commit: () => databaseConnection.prepare('COMMIT').run(),
+      rollback: () => databaseConnection.prepare('ROLLBACK').run(),
+    },
+    hashPassword: (password) => bcrypt.hash(password, 12),
+    comparePassword: (password, passwordHash) => bcrypt.compare(password, passwordHash),
+    generateToken,
+  });
+  // Hash only for first enrollment. Never return or retain the random password.
+  const proxySession = bridge === null ? null : async () => {
+    const placeholderHash = userDb.hasUsers() ? null : await bcrypt.hash(randomBytes(32).toString('hex'), 12);
+    return service.issueProxySession(() => userDb.resolveProxyUser(placeholderHash));
+  };
+  return createAuthRouter(service, authenticateToken, bridge, proxySession);
+}

@@ -24,7 +24,8 @@ import { createGitModule } from './modules/git/index.js';
 import {
     authenticateToken,
     authenticateWebSocket,
-    authRoutes,
+    createAuthModule,
+    createProxySsoBridge,
     validateApiKey,
 } from './modules/auth/index.js';
 import { taskmasterRoutes } from './modules/taskmaster/index.js';
@@ -36,8 +37,8 @@ import projectModuleRoutes from './modules/projects/projects.routes.js';
 import notificationRoutes from './modules/notifications/notifications.routes.js';
 import { userRoutes } from './modules/user/index.js';
 import {
+    createPluginsModule,
     getPluginPort,
-    pluginsRoutes,
     startEnabledPluginServers,
     stopAllPlugins,
 } from './modules/plugins/index.js';
@@ -82,6 +83,10 @@ const systemRoutes = createSystemModule({
 });
 console.log('SERVER_PORT from env:', process.env.SERVER_PORT);
 
+const HOST = process.env.HOST || '0.0.0.0';
+const bridge = createProxySsoBridge(process.env, HOST, IS_PLATFORM);
+const authRoutes = createAuthModule(bridge);
+const pluginsRoutes = createPluginsModule({ forwardQueryToken: !bridge });
 const app = express();
 const server = http.createServer(app);
 const queryClaude = providerRuntimeService.getRunner('claude');
@@ -108,6 +113,7 @@ createWebSocketServer(server, {
     verifyClient: {
         isPlatform: IS_PLATFORM,
         authenticateWebSocket,
+        allowsUpgrade: bridge?.allowsUpgrade,
     },
     chat: {
         runtime: providerRuntimeService,
@@ -125,7 +131,31 @@ createWebSocketServer(server, {
     getPluginPort,
 });
 
-app.use(cors({ exposedHeaders: ['X-Refreshed-Token', 'X-Auth-Error'] }));
+if (bridge) {
+    // Authenticate before parsing bodies or serving even public/static app files.
+    app.use((req, res, next) => {
+        const loopback = ['127.0.0.1', '::1'].includes(req.socket.remoteAddress ?? '');
+        const health = (req.method === 'GET' || req.method === 'HEAD') && req.path === '/health';
+        // This exact POST route runs Browser Use MCP's independently authenticated
+        // router; no wildcard exemption may fall through into other app routes.
+        const browserMcp = req.method === 'POST' && /^\/api\/browser-use-mcp\/tools\/[^/]+$/.test(req.path);
+        if ((loopback && (health || browserMcp)) || bridge.verifyProxy(req)) {
+            next();
+            return;
+        }
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(401).json({ error: 'CloudCLI SSO proxy authentication required' });
+    });
+    // Upstream SSE/WS clients use JWTs in query strings. Do not propagate those
+    // URLs as referrers. Do not grant any browser cross-origin reads in SSO mode.
+    app.use((_req, res, next) => {
+        res.setHeader('Referrer-Policy', 'no-referrer');
+        res.setHeader('Cache-Control', 'private, no-store');
+        next();
+    });
+} else {
+    app.use(cors({ exposedHeaders: ['X-Refreshed-Token', 'X-Auth-Error'] }));
+}
 app.use(express.json({
     limit: '50mb',
     type: (req) => {
@@ -211,7 +241,9 @@ app.use(express.static(path.join(APP_ROOT, 'public')));
 // Add cache control: HTML files should not be cached, but assets can be cached
 app.use(express.static(path.join(APP_ROOT, 'dist'), {
     setHeaders: (res, filePath) => {
-        if (filePath.endsWith('.html')) {
+        if (bridge) {
+            res.setHeader('Cache-Control', 'private, no-store');
+        } else if (filePath.endsWith('.html')) {
             // Prevent HTML caching to avoid service worker issues after builds
             res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
             res.setHeader('Pragma', 'no-cache');
@@ -280,7 +312,6 @@ app.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
 });
 
 const SERVER_PORT = Number.parseInt(process.env.SERVER_PORT || '3001', 10);
-const HOST = process.env.HOST || '0.0.0.0';
 const DISPLAY_HOST = getConnectableHost(HOST);
 const VITE_PORT = process.env.VITE_PORT || 5173;
 const LOCAL_SERVER_MARKER_PATH = path.join(os.homedir(), '.cloudcli', 'local-server.json');

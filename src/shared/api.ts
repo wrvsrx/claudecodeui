@@ -12,6 +12,14 @@ export type ApiRequestOptions = Omit<RequestInit, 'headers'> & {
   headers?: Record<string, string>;
 };
 
+// In bridge mode a proxy rejection can arrive before the app can return
+// X-Auth-Error. Do not follow redirects; only a top-level navigation can log in.
+let ssoProxySessionEnabled = false;
+
+export function setSsoProxySessionEnabled(enabled: boolean): void {
+  ssoProxySessionEnabled = enabled;
+}
+
 // Utility function for authenticated API calls
 export const authenticatedFetch = (
   url: string,
@@ -30,8 +38,10 @@ export const authenticatedFetch = (
     defaultHeaders['Authorization'] = `Bearer ${token}`;
   }
 
+  const useProxySession = ssoProxySessionEnabled;
   return fetch(url, {
     ...options,
+    ...(useProxySession ? { mode: 'same-origin', redirect: 'manual' } : {}),
     // Every response here can carry X-Refreshed-Token or X-Auth-Error, and a
     // served-from-cache response replays the headers it was stored with. Those
     // headers describe one moment in one session, so they must never be reused:
@@ -43,6 +53,16 @@ export const authenticatedFetch = (
       ...options.headers,
     },
   }).then((response) => {
+    // Do not revive or expire a replaced session via an in-flight response.
+    if (useProxySession && token !== localStorage.getItem('auth-token')) {
+      return response;
+    }
+    if (useProxySession && (response.type === 'opaqueredirect' || response.status === 401)) {
+      if (token) {
+        expireAuthSession();
+      }
+      return response;
+    }
     const refreshedToken = response.headers.get('X-Refreshed-Token');
     if (refreshedToken) {
       storeAuthToken(refreshedToken);
@@ -200,7 +220,16 @@ const pluginAssetPath = (pluginName: string, assetFile: string) =>
 export const api = {
   // Auth endpoints (no token required)
   auth: {
-    status: () => fetch('/api/auth/status'),
+    status: () => fetch('/api/auth/status', { cache: 'no-store', redirect: 'manual' }),
+    // The proxy cookie, not a previous CloudCLI JWT, authenticates this exchange.
+    sso: () => fetch('/api/auth/sso', {
+      method: 'POST',
+      headers: { 'X-CloudCLI-SSO': '1' },
+      credentials: 'same-origin',
+      mode: 'same-origin',
+      cache: 'no-store',
+      redirect: 'manual',
+    }),
     login: (username: string, password: string) => fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

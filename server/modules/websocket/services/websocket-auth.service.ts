@@ -1,9 +1,11 @@
+import type { IncomingMessage } from 'node:http';
 import type { VerifyClientCallbackSync } from 'ws';
 
 import type { AuthenticatedWebSocketRequest } from '@/shared/types.js';
 
 type WebSocketAuthDependencies = {
   isPlatform: boolean;
+  allowsUpgrade?: (request: IncomingMessage) => boolean;
   authenticateWebSocket: (token: string | null) => {
     id?: string | number;
     userId?: string | number;
@@ -20,6 +22,9 @@ export function verifyWebSocketClient(
   dependencies: WebSocketAuthDependencies
 ): boolean {
   const request = info.req as AuthenticatedWebSocketRequest;
+  if (dependencies.allowsUpgrade && !dependencies.allowsUpgrade(request)) {
+    return false;
+  }
   const upgradeUrl = new URL(request.url ?? '/', 'http://localhost');
   const loggedUrl = new URL(upgradeUrl);
   if (loggedUrl.searchParams.has('token')) {
