@@ -32,6 +32,7 @@ type PtySessionEntry = {
   timeoutId: NodeJS.Timeout | null;
   projectPath: string;
   sessionId: string | null;
+  claudeResume: boolean;
   // The app theme a Claude CLI in this pty was launched for; null for any other
   // program. A running CLI keeps its launch-time colours, so a reattaching
   // client needs this, not its own current theme, to know if they differ.
@@ -39,6 +40,11 @@ type PtySessionEntry = {
 };
 
 const ptySessionsMap = new Map<string, PtySessionEntry>();
+
+/** The providers module refuses profile changes while a resumed Claude Shell is still open. */
+export function hasClaudeShellSession(sessionId: string): boolean {
+  return Array.from(ptySessionsMap.values()).some((entry) => entry.claudeResume && entry.sessionId === sessionId);
+}
 const PTY_SESSION_TIMEOUT = 30 * 60 * 1000;
 const SHELL_URL_PARSE_BUFFER_LIMIT = 32768;
 const TRAILING_URL_PUNCTUATION_REGEX = /[)\]}>.,;:!?]+$/;
@@ -680,6 +686,7 @@ export function handleShellConnection(
           timeoutId: null,
           projectPath,
           sessionId,
+          claudeResume: provider === 'claude' && !isPlainShell && Boolean(resumeSessionId),
           claudeColorScheme,
         });
 

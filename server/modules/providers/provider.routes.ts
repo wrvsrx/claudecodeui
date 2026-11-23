@@ -741,7 +741,7 @@ router.post(
     const provider = parseProvider(req.params.provider);
     const sessionId = parseSessionId(req.params.sessionId);
     const model = parseSessionModelPayload(req.body);
-    const stored = providerModelsService.setSessionModel(provider, sessionId, model);
+    const stored = providerModelsService.setSessionModel(provider, sessionId, model, req.body?.claudeSettingsRevision);
     // A session row only exists once the gateway has allocated one. Report the
     // selection back either way so the client can hold it until the first send.
     res.json(createApiSuccessResponse(
@@ -757,7 +757,7 @@ router.post(
     const provider = parseProvider(req.params.provider);
     const sessionId = parseSessionId(req.params.sessionId);
     const effort = parseSessionEffortPayload(req.body);
-    const stored = providerModelsService.setSessionEffort(provider, sessionId, effort);
+    const stored = providerModelsService.setSessionEffort(provider, sessionId, effort, req.body?.claudeSettingsRevision);
     // Mirror active-model behavior for a composer that picked an effort just
     // before the session gateway created its row.
     res.json(createApiSuccessResponse(
@@ -1020,6 +1020,27 @@ router.post(
     res.json(createApiSuccessResponse(result));
   }),
 );
+
+router.get('/sessions/:sessionId/claude-settings', asyncHandler(async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(createApiSuccessResponse(sessionsService.getClaudeSessionSettings(parseSessionId(req.params.sessionId))));
+}));
+
+router.put('/sessions/:sessionId/claude-settings', asyncHandler(async (req, res) => {
+  const body: unknown = req.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length !== 2
+    || !Object.hasOwn(body, 'selectedProfile') || !Object.hasOwn(body, 'revision')) {
+    throw new AppError('An explicit profile and revision are required.', { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  }
+  const { selectedProfile, revision } = body as Record<string, unknown>;
+  if ((selectedProfile !== null && typeof selectedProfile !== 'string')
+    || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) {
+    throw new AppError('Expected a profile ID or null and current revision.', { code: 'INVALID_REQUEST_BODY', statusCode: 400 });
+  }
+  res.set('Cache-Control', 'no-store');
+  const result = await sessionsService.switchClaudeSessionSettings(parseSessionId(req.params.sessionId), selectedProfile, revision);
+  res.json(createApiSuccessResponse(result));
+}));
 
 router.post(
   '/sessions/:sessionId/fork',

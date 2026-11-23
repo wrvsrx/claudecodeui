@@ -550,6 +550,7 @@ export const runMigrations = (db: Database) => {
     addSessionEffortColumn(db);
     const sessionColumns = getTableInfo(db, 'sessions').map((column) => column.name);
     addColumnToTableIfNotExists(db, 'sessions', sessionColumns, 'claude_settings_profile_id', 'TEXT');
+    addColumnToTableIfNotExists(db, 'sessions', sessionColumns, 'claude_settings_revision', 'INTEGER NOT NULL DEFAULT 0');
     addForkedFromSessionIdColumn(db);
     ensureProjectsForSessionPaths(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);

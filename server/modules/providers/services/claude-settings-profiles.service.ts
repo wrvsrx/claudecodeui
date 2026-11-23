@@ -126,6 +126,23 @@ export const claudeSettingsProfilesService = {
     return selectedProfile;
   },
 
+  // Used by the session picker independently of the account preference.
+  listProfiles() {
+    return Array.from(readProfiles(), ([id, { label }]) => ({ id, label }));
+  },
+
+  // An in-place session switch uses an explicit selection, never the account preference.
+  validateSessionSelection(profileId: string | null): void {
+    if (profileId === null) return;
+    const profile = readProfiles().get(profileId);
+    if (!profile) {
+      throw new AppError('Unknown Claude settings profile.', {
+        code: 'UNKNOWN_CLAUDE_SETTINGS_PROFILE', statusCode: 400,
+      });
+    }
+    readSettings(profile.path);
+  },
+
   applyToSdkOptions(
     profileId: string,
     options: { settings?: Settings; env: NodeJS.ProcessEnv },

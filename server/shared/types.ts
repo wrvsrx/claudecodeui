@@ -205,6 +205,8 @@ export type ProviderSessionModel = {
   /** NULL means this session has not recorded an effort choice yet. */
   effort: string | null;
   source: ProviderSessionModelSource;
+  /** Revision used by the composer to reject model changes from before a Claude provider switch. */
+  claudeSettingsRevision?: number;
 };
 
 /**

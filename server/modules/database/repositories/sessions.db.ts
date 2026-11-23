@@ -15,6 +15,7 @@ type SessionRow = {
   /** Reasoning effort this session runs with; NULL until the app records one. */
   effort: string | null;
   claude_settings_profile_id: string | null;
+  claude_settings_revision: number;
   /** The app session this one was branched from; NULL unless it is a fork. */
   forked_from_session_id: string | null;
   isArchived: number;
@@ -28,7 +29,7 @@ type RecentSessionsPage = {
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, claude_settings_profile_id, forked_from_session_id, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, claude_settings_profile_id, claude_settings_revision, forked_from_session_id, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -488,13 +489,16 @@ export const sessionsDb = {
     db.prepare('DELETE FROM superseded_provider_sessions WHERE session_id = ?').run(sessionId);
   },
 
-  /**
-   * Records the model one session runs with.
-   *
-   * Called both when the user picks a model for the session and on every send,
-   * so the row always reflects what the session last ran with and reopening it
-   * restores that model instead of a catalog default.
-   */
+  /** Atomically bind a new backend and invalidate model/effort from the old one. */
+  switchClaudeSettingsProfile(sessionId: string, profileId: string | null, model: string): void {
+    getConnection().prepare(
+      `UPDATE sessions
+       SET claude_settings_profile_id = ?, claude_settings_revision = claude_settings_revision + 1,
+           model = ?, effort = 'default'
+       WHERE session_id = ? AND provider = 'claude'`
+    ).run(profileId, model, sessionId);
+  },
+
   setSessionModel(sessionId: string, model: string): void {
     const db = getConnection();
     db.prepare(

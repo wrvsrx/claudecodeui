@@ -23,6 +23,7 @@ function createSessionRow(overrides: Record<string, unknown> = {}) {
     model: null,
     effort: null,
     claude_settings_profile_id: null,
+    claude_settings_revision: 0,
     forked_from_session_id: null,
     isArchived: 0,
     created_at: '2026-01-01T00:00:00.000Z',

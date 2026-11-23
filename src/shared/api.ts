@@ -457,6 +457,10 @@ export const api = {
     updateCli: (provider: string) =>
       post(`/api/providers/${encodeURIComponent(provider)}/cli/update`),
     claudeSettingsPermissions: () => get('/api/providers/claude/settings-permissions'),
+    claudeSessionSettings: (sessionId: string, options: ApiRequestOptions = {}) =>
+      get(`/api/providers/sessions/${encodeURIComponent(sessionId)}/claude-settings`, options),
+    switchClaudeSessionSettings: (sessionId: string, selectedProfile: string | null, revision: number) =>
+      put(`/api/providers/sessions/${encodeURIComponent(sessionId)}/claude-settings`, { selectedProfile, revision }),
     claudeSettings: (options: ApiRequestOptions = {}) => get('/api/claude-settings', options),
     updateClaudeSettings: (selectedProfile: string | null, options: ApiRequestOptions = {}) =>
       put('/api/claude-settings', { selectedProfile }, options),
@@ -489,13 +493,13 @@ export const api = {
       get(`/api/providers/sessions/${encodeURIComponent(sessionId)}/token-usage`),
     sessionActiveModel: (provider: string, sessionId: string) =>
       get(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/active-model`),
-    setSessionActiveModel: (provider: string, sessionId: string, model: string) =>
+    setSessionActiveModel: (provider: string, sessionId: string, model: string, claudeSettingsRevision?: number) =>
       post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/active-model`, {
-        model,
+        model, claudeSettingsRevision,
       }),
-    setSessionActiveEffort: (provider: string, sessionId: string, effort: string) =>
+    setSessionActiveEffort: (provider: string, sessionId: string, effort: string, claudeSettingsRevision?: number) =>
       post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/active-effort`, {
-        effort,
+        effort, claudeSettingsRevision,
       }),
 
     mcpServers: (

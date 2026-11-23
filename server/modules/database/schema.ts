@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     effort TEXT,
     -- Server-allowlisted profile ID, never a settings filename. NULL is default.
     claude_settings_profile_id TEXT,
+    claude_settings_revision INTEGER NOT NULL DEFAULT 0,
     -- The app session this one was branched from, NULL for sessions created
     -- normally. Informational only: a fork is a fully independent provider
     -- session, and deleting the source does not affect it.

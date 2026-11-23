@@ -116,6 +116,7 @@ type SessionSelectionApiResponse = {
      * which the composer replaces with the user's per-provider selection.
      */
     source?: 'session' | 'provider' | 'default';
+    claudeSettingsRevision?: number;
   };
 };
 
@@ -124,6 +125,7 @@ type SessionProviderSelection = {
   sessionId: string;
   model: string | null;
   effort: string | null;
+  claudeSettingsRevision?: number;
 };
 
 const getSessionSelectionKey = (provider: LLMProvider, sessionId: string): string => (
@@ -529,6 +531,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
           sessionId: selectedSessionId,
           model: body.success && resolvedModel && body.data?.source !== 'default' ? resolvedModel : null,
           effort: body.success ? resolvedEffort : null,
+          claudeSettingsRevision: body.data?.claudeSettingsRevision,
         });
       } catch (error) {
         if (
@@ -552,6 +555,19 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       cancelled = true;
     };
   }, [selectedSessionId, selectedSessionProvider]);
+
+  // In-flight GETs and optimistic picks from the old backend cannot overwrite the reset.
+  const applyClaudeSessionSwitch = useCallback((sessionId: string, selection: {
+    model: string | null; effort: string | null; revision: number;
+  }) => {
+    if (selectedSessionKeyRef.current !== getSessionSelectionKey('claude', sessionId)) return;
+    sessionSelectionLoadRequestIdRef.current += 1;
+    sessionModelMutationIdRef.current += 1;
+    sessionEffortMutationIdRef.current += 1;
+    setSessionSelection({ provider: 'claude', sessionId, model: selection.model,
+      effort: selection.effort, claudeSettingsRevision: selection.revision });
+  }, []);
+
 
   /**
    * Applies a model choice.
@@ -583,6 +599,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       targetProvider,
       normalizedSessionId,
       model,
+      activeSessionSelection?.claudeSettingsRevision,
     );
 
     const body = (await response.json()) as SessionSelectionApiResponse;
@@ -599,13 +616,14 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
         provider: targetProvider,
         sessionId: normalizedSessionId,
         model: storedModel,
+        claudeSettingsRevision: activeSessionSelection?.claudeSettingsRevision,
         effort: current?.provider === targetProvider && current.sessionId === normalizedSessionId
           ? current.effort
           : body.data?.effort?.trim() || null,
       }));
     }
     return { scope: 'session' as const, model: storedModel };
-  }, [setStoredProviderModel]);
+  }, [activeSessionSelection?.claudeSettingsRevision, setStoredProviderModel]);
 
   /**
    * Applies an effort choice optimistically and persists it for the open
@@ -637,6 +655,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       provider: targetProvider,
       sessionId: normalizedSessionId,
       model: previousSelection?.model ?? null,
+      claudeSettingsRevision: previousSelection?.claudeSettingsRevision,
       effort,
     });
 
@@ -645,6 +664,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
         targetProvider,
         normalizedSessionId,
         effort,
+        previousSelection?.claudeSettingsRevision,
       );
       const body = (await response.json()) as SessionSelectionApiResponse;
       if (!response.ok || !body.success) {
@@ -663,6 +683,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
             ? current.model
             : previousSelection?.model ?? null,
           effort: storedEffort,
+          claudeSettingsRevision: previousSelection?.claudeSettingsRevision,
         }));
       }
 
@@ -831,6 +852,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     currentProviderEffort,
     currentProviderEffortOptions,
     currentProviderModel,
+    applyClaudeSessionSwitch,
     currentProviderModelOptions,
     permissionMode,
     pendingPermissionRequests,

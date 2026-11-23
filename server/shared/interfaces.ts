@@ -49,6 +49,8 @@ export interface IProviderRuntime {
    * running-sessions list falls back to chat runs alone.
    */
   listBackgroundWork?(): Array<{ sessionId: string; tasks: BackgroundTaskSummary[] }>;
+  /** Whether a provider still owns a live process for this app session, including post-turn holds. */
+  hasLiveSession?(sessionId: string): boolean;
   /**
    * Stops one outstanding background task. Resolves false when the session has
    * no live process or that process is not tracking the task — it already

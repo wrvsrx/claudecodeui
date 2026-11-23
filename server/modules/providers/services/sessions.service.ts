@@ -3,7 +3,9 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 
 import { projectsDb, sessionsDb } from '@/modules/database/index.js';
-import { broadcastSessionUpserted, chatRunRegistry } from '@/modules/websocket/index.js';
+import { broadcastSessionUpserted, chatRunRegistry, hasClaudeShellSession } from '@/modules/websocket/index.js';
+import { CLAUDE_PREDEFINED_MODELS } from '../list/claude/claude-models.provider.js';
+import { sideQuestionsService } from './side-questions.service.js';
 import { claudeSettingsProfilesService } from './claude-settings-profiles.service.js';
 import { providerRegistry } from '@/modules/providers/provider.registry.js';
 import { listBusyClaudeCliSessions } from '@/modules/providers/services/claude-cli-liveness.service.js';
@@ -279,6 +281,17 @@ async function readCurrentContextHistory(
   };
 }
 
+function requireClaudeSession(sessionId: string) {
+  const session = sessionsDb.getSessionById(sessionId);
+  if (!session) throw new AppError('Session not found.', { code: 'SESSION_NOT_FOUND', statusCode: 404 });
+  if (session.provider !== 'claude') {
+    throw new AppError('Only Claude sessions can switch Claude providers.', {
+      code: 'CLAUDE_PROFILE_NOT_SUPPORTED', statusCode: 400,
+    });
+  }
+  return session;
+}
+
 export const sessionsService = {
   /**
    * Lists provider ids that can load session history and normalize live messages.
@@ -453,6 +466,43 @@ export const sessionsService = {
       projectPath: normalizedProjectPath,
       sessionName,
     };
+  },
+
+  /** The provider routes expose only the selected allowlist ID and revision. */
+  getClaudeSessionSettings(sessionId: string) {
+    const session = requireClaudeSession(sessionId);
+    return { selectedProfile: session.claude_settings_profile_id, revision: session.claude_settings_revision,
+      model: session.model, effort: session.effort, profiles: claudeSettingsProfilesService.listProfiles() };
+  },
+
+  /** Switches only this idle session; the next SDK turn resumes the same native ID. */
+  async switchClaudeSessionSettings(sessionId: string, selectedProfile: string | null, revision: number) {
+    requireClaudeSession(sessionId);
+    const external = await listBusyClaudeCliSessions();
+    // No await from this fresh read through the update. Run admission and Shell
+    // launch in this server cannot interleave with these final checks and write.
+    const session = requireClaudeSession(sessionId);
+    if (session.claude_settings_revision !== revision) {
+      throw new AppError('Claude provider changed. Reopen the picker and try again.', {
+        code: 'CLAUDE_SETTINGS_CHANGED', statusCode: 409,
+      });
+    }
+    const runtime = providerRegistry.resolveProvider('claude').runtime;
+    if (chatRunRegistry.isProcessing(sessionId) || runtime.hasLiveSession?.(sessionId)
+      || runtime.listBackgroundWork?.().some((entry) => entry.sessionId === sessionId)
+      || sideQuestionsService.countRunning(sessionId) || hasClaudeShellSession(sessionId)
+      || external.some((entry) => entry.providerSessionId === session.provider_session_id)) {
+      throw new AppError('Wait for this session’s turn, Shell, and background work to finish.', {
+        code: 'SESSION_BUSY', statusCode: 409,
+      });
+    }
+    claudeSettingsProfilesService.validateSessionSelection(selectedProfile);
+    if (selectedProfile !== session.claude_settings_profile_id) {
+      sessionsDb.switchClaudeSettingsProfile(sessionId, selectedProfile, CLAUDE_PREDEFINED_MODELS.DEFAULT);
+    }
+    const current = requireClaudeSession(sessionId);
+    return { selectedProfile: current.claude_settings_profile_id, revision: current.claude_settings_revision,
+      model: current.model, effort: current.effort };
   },
 
   /**

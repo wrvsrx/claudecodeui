@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -9,6 +9,7 @@ import test from 'node:test';
 import express, { type NextFunction, type Request, type Response } from 'express';
 
 import { closeConnection, initializeDatabase, sessionsDb, userDb, userPreferencesDb } from '@/modules/database/index.js';
+import { chatRunRegistry } from '@/modules/websocket/index.js';
 import { CLAUDE_SETTINGS_PROFILE_PREFERENCE_KEY } from '@/shared/index.js';
 import { AppError } from '@/shared/utils.js';
 import type { AnyRecord, ProviderRuntimeContext } from '@/shared/types.js';
@@ -98,6 +99,10 @@ test('authenticated accounts select and pin Claude profiles independently', asyn
         assert.equal(JSON.stringify(payload).includes(settings), false);
         return payload.data.sessionId;
       };
+      const switchProfile = (sessionId: string, body: unknown, requestHeaders: Record<string, string> = headers) =>
+        fetch(`${base}/providers/sessions/${sessionId}/claude-settings`, {
+          method: 'PUT', headers: requestHeaders, body: JSON.stringify(body),
+        });
       const boundProfile = (id: string) => sessionsDb.getSessionById(id)?.claude_settings_profile_id;
       const profiles = [{ id: 'gateway', label: 'Gateway' }];
       assert.equal((await fetch(`${base}/claude-settings`)).status, 401);
@@ -126,6 +131,41 @@ test('authenticated accounts select and pin Claude profiles independently', asyn
       assert.equal(boundProfile(oldDefault), null);
       const pinned = await createSession('claude');
       assert.equal(boundProfile(pinned), 'gateway');
+      const codex = await createSession('codex');
+      assert.equal((await switchProfile(codex, { selectedProfile: null, revision: 0 })).status, 400);
+      assert.equal((await switchProfile(oldDefault, { selectedProfile: 'gateway', revision: 0 }, json)).status, 401);
+      for (const body of [{}, [], { revision: 0 }, { selectedProfile: 'unknown', revision: 0 },
+        { selectedProfile: settings, revision: 0 }, { selectedProfile: { path: settings }, revision: 0 },
+        { selectedProfile: 'gateway', revision: -1 }, { selectedProfile: 'gateway', revision: 0, settings }]) {
+        const refused = await switchProfile(oldDefault, body);
+        assert.equal(refused.status, 400);
+        assert.equal((await refused.text()).includes(settings), false);
+        assert.equal(boundProfile(oldDefault), null);
+      }
+      const active = chatRunRegistry.startRun({ appSessionId: oldDefault, provider: 'claude',
+        providerSessionId: null, connection: null, userId: firstUser.id });
+      assert.ok(active);
+      try {
+        assert.equal((await switchProfile(oldDefault, { selectedProfile: 'gateway', revision: 0 })).status, 409);
+      } finally {
+        chatRunRegistry.completeRunIfCurrent(active, { exitCode: 0 });
+      }
+      sessionsDb.setSessionModel(oldDefault, 'old-provider-model');
+      sessionsDb.setSessionEffort(oldDefault, 'max');
+      const changes = await Promise.all([1, 2].map(() => switchProfile(oldDefault, { selectedProfile: 'gateway', revision: 0 })));
+      assert.deepEqual(changes.map(({ status }) => status).sort(), [200, 409]);
+      assert.deepEqual(await changes.find((result) => result.ok)?.json(), { success: true,
+        data: { selectedProfile: 'gateway', revision: 1, model: 'default', effort: 'default' } });
+      const setModel = (body: unknown) => fetch(`${base}/providers/claude/sessions/${oldDefault}/active-model`,
+        { method: 'POST', headers, body: JSON.stringify(body) });
+      assert.equal((await setModel({ model: 'stale', claudeSettingsRevision: 0 })).status, 409);
+      assert.equal((await setModel({ model: 'stale' })).status, 409);
+      assert.equal((await setModel({ model: 'new-provider-model', claudeSettingsRevision: 1 })).status, 200);
+      assert.equal((await switchProfile(oldDefault, { selectedProfile: null, revision: 1 })).status, 200);
+      assert.equal(boundProfile(oldDefault), null);
+      assert.equal(sessionsDb.getSessionById(oldDefault)?.model, 'default');
+      assert.equal(boundProfile(pinned), 'gateway');
+      assert.deepEqual(await (await get()).json(), { profiles, selectedProfile: 'gateway' });
       assert.equal((await create('claude', headers, { claudeSettingsProfile: 'gateway' })).status, 400);
       assert.equal((await create('claude', headers, { claudeSettingsProfile: null })).status, 400);
 
@@ -210,9 +250,24 @@ test('Claude queries use the persisted profile on first run and resume, never ra
     await run(sessionId, { model: 'claude-fable-5', effort: 'ultracode' });
     assert.deepEqual(captured[3]?.settings, { ...profileSettings, ultracode: true, enableWorkflows: true });
     assert.equal(captured[3]?.effort, 'xhigh');
+    const transcript = path.join(dir, 'native-claude-id.jsonl');
+    const transcriptText = JSON.stringify({ type: 'user', sessionId: 'native-claude-id', parentUuid: null,
+      uuid: '65e0991c-bcf4-40de-b823-e4070d830f38', message: { role: 'user', content: 'Existing history' } }) + '\n';
+    await writeFile(transcript, transcriptText);
+    const before = sessionsDb.getSessionById(sessionId);
+    await sessionsService.switchClaudeSessionSettings(sessionId, null, 0);
+    await run(sessionId);
+    assert.equal(captured[4]?.resume, 'native-claude-id');
+    assert.equal(captured[4]?.settings, undefined);
+    await sessionsService.switchClaudeSessionSettings(sessionId, 'gateway', 1);
+    await run(sessionId);
+    assert.equal(captured[5]?.resume, 'native-claude-id');
+    assert.equal(captured[5]?.settings, settings);
+    assert.equal(sessionsDb.getSessionById(sessionId)?.forked_from_session_id, before?.forked_from_session_id);
+    assert.equal(await readFile(transcript, 'utf8'), transcriptText);
     await writeFile(manifest, '{}');
     await run(sessionId);
-    assert.equal(captured.length, 4, 'a removed profile must not start an SDK process');
+    assert.equal(captured.length, 6, 'a removed profile must not start an SDK process');
     assert.ok(sent.some((message) => message.kind === 'error' && String(message.content).includes('no longer enabled')));
   });
 });

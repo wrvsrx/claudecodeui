@@ -15,7 +15,9 @@ import { AppError } from '@/shared/utils.js';
 
 /** Session-row access the service needs, narrowed so tests can stub it. */
 type ProviderModelsSessionStore = {
-  getSessionById(sessionId: string): { model: string | null; effort: string | null } | null;
+  getSessionById(sessionId: string): {
+    model: string | null; effort: string | null; provider?: string; claude_settings_revision?: number;
+  } | null;
   setSessionModel(sessionId: string, model: string): void;
   setSessionEffort(sessionId: string, effort: string): void;
 };
@@ -364,6 +366,16 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     };
   };
 
+  const requireMatchingSettingsRevision = (sessionId: string, revision?: number) => {
+    const current = sessions.getSessionById(sessionId);
+    if (current?.provider === 'claude' && (current.claude_settings_revision ?? 0) > 0
+      && revision !== current.claude_settings_revision) {
+      throw new AppError('Claude provider changed. Refresh the session before changing model settings.', {
+        code: 'CLAUDE_SETTINGS_CHANGED', statusCode: 409,
+      });
+    }
+  };
+
   /**
    * Records the model one session runs with.
    *
@@ -377,6 +389,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     provider: LLMProvider,
     sessionId: string,
     model: string,
+    revision?: number,
   ): ProviderSessionModel | null => {
     const normalizedSessionId = sessionId.trim();
     const normalizedModel = model.trim();
@@ -389,6 +402,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
       return null;
     }
 
+    requireMatchingSettingsRevision(normalizedSessionId, revision);
     sessions.setSessionModel(normalizedSessionId, normalizedModel);
     return {
       provider,
@@ -410,6 +424,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     provider: LLMProvider,
     sessionId: string,
     effort: string,
+    revision?: number,
   ): { provider: LLMProvider; sessionId: string; effort: string; source: 'session' } | null => {
     const normalizedSessionId = sessionId.trim();
     const normalizedEffort = effort.trim();
@@ -421,6 +436,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
       return null;
     }
 
+    requireMatchingSettingsRevision(normalizedSessionId, revision);
     sessions.setSessionEffort(normalizedSessionId, normalizedEffort);
     return {
       provider,
@@ -457,6 +473,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
           model: recordedSelection.model,
           effort: recordedSelection.effort,
           source: 'session',
+          claudeSettingsRevision: sessions.getSessionById(normalizedSessionId)?.claude_settings_revision,
         };
       }
 

@@ -2230,6 +2230,7 @@ export const claudeRuntime = {
     listPending: getPendingApprovalsForSession,
   },
   listBackgroundWork: listClaudeSDKBackgroundWork,
+  hasLiveSession: (sessionId: string) => activeSessions.has(sessionId),
   stopBackgroundTask: stopClaudeSDKTask,
   askSideQuestion,
   steer: steerClaudeSDKSession,

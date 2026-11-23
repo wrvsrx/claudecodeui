@@ -1,6 +1,7 @@
 export { WS_OPEN_STATE, connectedClients, broadcastToConnectedClients } from './services/websocket-state.service.js';
 export { createWebSocketServer } from './services/websocket-server.service.js';
 export { chatRunRegistry, onRunSettled } from './services/chat-run-registry.service.js';
+export { hasClaudeShellSession } from './services/shell-websocket.service.js';
 // Consumed by the providers module's sessions watcher, which announces the
 // sessions it (re)indexed from disk through the same builder the chat gateway
 // uses, so both paths put the identical delta on the wire.

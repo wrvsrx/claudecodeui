@@ -270,16 +270,24 @@ async function dispatchRun(
     return { started: false, error: 'A run is already in progress for this session.' };
   }
 
-  const clientOptions = (data.options ?? {}) as AnyRecord;
+  const clientOptions = { ...((data.options ?? {}) as AnyRecord) };
+  // A send may have waited on edit-anchor I/O, a timer, or another tab. After
+  // an in-place switch only explicitly saved model/effort are authoritative.
+  // Re-read now under the admitted run, never from the earlier send snapshot.
+  const current = provider === 'claude' ? sessionsDb.getSessionById(sessionId) : null;
+  if (current && current.claude_settings_revision > 0) {
+    clientOptions.model = current.model ?? undefined;
+    clientOptions.effort = current.effort ?? undefined;
+  }
   const command = typeof data.content === 'string' ? data.content : '';
 
   // Record what this turn runs with so reopening the session later restores the
   // same model and reasoning effort, and so the resume path has a
   // session-scoped model answer to use.
-  if (typeof clientOptions.model === 'string' && clientOptions.model.trim()) {
+  if (!current?.claude_settings_revision && typeof clientOptions.model === 'string' && clientOptions.model.trim()) {
     providerModelsService.setSessionModel(provider, sessionId, clientOptions.model);
   }
-  if (typeof clientOptions.effort === 'string' && clientOptions.effort.trim()) {
+  if (!current?.claude_settings_revision && typeof clientOptions.effort === 'string' && clientOptions.effort.trim()) {
     providerModelsService.setSessionEffort(provider, sessionId, clientOptions.effort);
   }
 
@@ -453,7 +461,8 @@ function handleChatSideQuestion(
   }
 
   const options = (data.options ?? {}) as AnyRecord;
-  const model = typeof options.model === 'string' && options.model.trim() ? options.model.trim() : null;
+  const model = provider === 'claude' && session.claude_settings_revision > 0 ? session.model
+    : typeof options.model === 'string' && options.model.trim() ? options.model.trim() : null;
 
   // Not awaited: the frame is accepted as soon as the question is admitted,
   // and the answer streams in through started/delta/done/error broadcasts.
