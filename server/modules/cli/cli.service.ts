@@ -198,6 +198,10 @@ export function createCliService(dependencies: CliServiceDependencies): CliAppli
   };
 
   const updatePackage = async (): Promise<void> => {
+    if (dependencies.environment.CLOUDCLI_MANAGED_BY_NIX === '1') {
+      dependencies.output.log('Update CloudCLI through your Nix configuration.');
+      return;
+    }
     dependencies.output.log(`${terminalTextStyles.info('[INFO]')} Checking for updates...`);
     const hasUpdate = await checkForUpdates(true);
     if (!hasUpdate) {
@@ -230,7 +234,7 @@ export function createCliService(dependencies: CliServiceDependencies): CliAppli
 
       switch (parsedArguments.command) {
         case 'start':
-          void checkForUpdates(true);
+          if (dependencies.environment.CLOUDCLI_MANAGED_BY_NIX !== '1') void checkForUpdates(true);
           await dependencies.startServer();
           return 0;
         case 'sandbox':

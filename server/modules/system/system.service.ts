@@ -29,6 +29,14 @@ export function createSystemUpdateService(dependencies: SystemUpdateDependencies
   return {
     /** Selects and executes the correct update workflow for this installation. */
     async updateSystem() {
+      if (dependencies.environment.CLOUDCLI_MANAGED_BY_NIX === '1') {
+        return {
+          success: false as const,
+          error: 'Update CloudCLI through your Nix configuration.',
+          output: '',
+          errorOutput: '',
+        };
+      }
       const updateCommand = dependencies.isPlatform
         ? 'npm run update:platform'
         : dependencies.installMode === 'git'
